@@ -1,0 +1,14 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"paths": {
+			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],
+			"@earendil-works/pi-agent-core": ["../agent/dist/index.d.ts"],
+			"@earendil-works/pi-agent-core/harness-v4": ["../agent/dist/harness-v4.d.ts"]
+		}
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}

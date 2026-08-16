@@ -1,0 +1,38 @@
+# electron-builder configuration for the Jip-pi desktop app.
+#
+# The app directory is a staged tree under release/staging assembled by
+# scripts/stage-app.mjs (vite bundles + the externalized coding-agent SDK
+# closure + window icon assets). The Pi backend binary ships outside the
+# asar at <install>/resources/backend so the bun-compiled pi.exe can resolve
+# its own assets relative to its directory.
+
+appId: com.jip-pi.app
+productName: Jip-pi
+asar: true
+npmRebuild: false
+directories:
+  app: release/staging
+  output: release
+  buildResources: assets
+files:
+  - "**/*"
+extraResources:
+  - from: resources/backend
+    to: backend
+win:
+  icon: icon.ico
+  executableName: Jip-pi
+  target:
+    - nsis
+nsis:
+  # Assisted installer: install directory page, per-user, no admin rights.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Jip-pi
+  runAfterFinish: true
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico
+  artifactName: "Jip-pi Setup ${version}.${ext}"

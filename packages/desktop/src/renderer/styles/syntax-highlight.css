@@ -1,0 +1,121 @@
+/*
+ * Fixed VS Code Dark+ syntax palette. These colors are intentionally literal:
+ * code blocks must not inherit Jip-pi's blue interaction or yellow
+ * attention semantics.
+ */
+
+.assistant-text pre {
+	border-color: #333333;
+	background: #1e1e1e;
+}
+
+.assistant-text pre code.hljs {
+	color: #d4d4d4;
+}
+
+.assistant-text .hljs-comment,
+.assistant-text .hljs-quote {
+	color: #6a9955;
+}
+
+.assistant-text .hljs-doctag {
+	color: #608b4e;
+}
+
+.assistant-text .hljs-keyword,
+.assistant-text .hljs-literal,
+.assistant-text .hljs-template-tag,
+.assistant-text .hljs-variable.language_,
+.assistant-text .hljs-meta .hljs-keyword,
+.assistant-text .hljs-name,
+.assistant-text .hljs-selector-tag {
+	color: #569cd6;
+}
+
+.assistant-text .hljs-title,
+.assistant-text .hljs-title.function_,
+.assistant-text .hljs-section {
+	color: #dcdcaa;
+}
+
+.assistant-text .hljs-title.class_,
+.assistant-text .hljs-title.class_.inherited__,
+.assistant-text .hljs-type,
+.assistant-text .hljs-built_in {
+	color: #4ec9b0;
+}
+
+.assistant-text .hljs-attr,
+.assistant-text .hljs-attribute,
+.assistant-text .hljs-property,
+.assistant-text .hljs-variable,
+.assistant-text .hljs-template-variable,
+.assistant-text .hljs-params {
+	color: #9cdcfe;
+}
+
+.assistant-text .hljs-number {
+	color: #b5cea8;
+}
+
+.assistant-text .hljs-symbol,
+.assistant-text .hljs-bullet {
+	color: #4fc1ff;
+}
+
+.assistant-text .hljs-string,
+.assistant-text .hljs-meta .hljs-string {
+	color: #ce9178;
+}
+
+.assistant-text .hljs-regexp,
+.assistant-text .hljs-char.escape_ {
+	color: #d16969;
+}
+
+.assistant-text .hljs-meta {
+	color: #c586c0;
+}
+
+.assistant-text .hljs-selector-class,
+.assistant-text .hljs-selector-id,
+.assistant-text .hljs-selector-pseudo,
+.assistant-text .hljs-selector-attr {
+	color: #d7ba7d;
+}
+
+.assistant-text .hljs-tag {
+	color: #808080;
+}
+
+.assistant-text .hljs-subst,
+.assistant-text .hljs-operator,
+.assistant-text .hljs-punctuation,
+.assistant-text .hljs-code,
+.assistant-text .hljs-formula {
+	color: #d4d4d4;
+}
+
+.assistant-text .hljs-link {
+	color: #ce9178;
+	text-decoration: underline;
+}
+
+.assistant-text .hljs-addition {
+	background: rgba(181, 206, 168, 0.12);
+	color: #b5cea8;
+}
+
+.assistant-text .hljs-deletion {
+	background: rgba(244, 71, 71, 0.12);
+	color: #f44747;
+}
+
+.assistant-text .hljs-emphasis {
+	font-style: italic;
+}
+
+.assistant-text .hljs-strong,
+.assistant-text .hljs-section {
+	font-weight: 700;
+}

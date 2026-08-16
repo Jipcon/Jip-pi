@@ -1,0 +1,54 @@
+{
+	"name": "@earendil-works/pi-desktop",
+	"productName": "Jip-pi",
+	"version": "0.1.0",
+	"description": "Jip-pi GUI: Electron + React frontend over the AgentBackend protocol",
+	"main": "./.vite/build/main.js",
+	"scripts": {
+		"dev": "concurrently -k -n renderer,main,preload,app \"vite --config vite.renderer.config.mjs\" \"vite build --watch --config vite.main.config.mjs\" \"vite build --watch --config vite.preload.config.mjs\" \"wait-on tcp:5173 .vite/build/main.js .vite/build/preload.js && electron .\"",
+		"build:vite": "node -e \"require('fs').rmSync('.vite',{recursive:true,force:true})\" && vite build --config vite.main.config.mjs && vite build --config vite.preload.config.mjs && vite build --config vite.renderer.config.mjs",
+		"stage:backend": "node scripts/stage-backend.mjs",
+		"stage:sdk": "node scripts/stage-sdk.mjs",
+		"stage:app": "node scripts/stage-app.mjs",
+		"prepare:backend": "npm run build:binary --workspace=@earendil-works/pi-coding-agent && npm run stage:backend",
+		"package": "npm run prepare:backend && npm run stage:sdk && npm run build:vite && npm run stage:app && electron-builder --dir",
+		"make": "npm run prepare:backend && npm run stage:sdk && npm run build:vite && npm run stage:app && electron-builder --win nsis",
+		"typecheck": "tsgo -p tsconfig.json",
+		"test": "vitest --run"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-protocol": "^0.1.0",
+		"@earendil-works/pi-coding-agent": "0.84.1",
+		"@earendil-works/pi-gui-adapter": "^0.1.0",
+		"@earendil-works/pi-sdk-adapter": "^0.1.0",
+		"katex": "0.16.47",
+		"react": "19.2.8",
+		"react-dom": "19.2.8",
+		"react-markdown": "10.1.0",
+		"rehype-highlight": "7.0.2",
+		"rehype-katex": "7.0.1",
+		"remark-gfm": "4.0.1",
+		"remark-math": "6.0.0"
+	},
+	"license": "MIT",
+	"author": "Jip-pi Contributors",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@testing-library/dom": "10.4.1",
+		"@testing-library/react": "16.3.2",
+		"@types/node": "24.12.4",
+		"@types/react": "19.2.18",
+		"@types/react-dom": "19.2.4",
+		"@vitejs/plugin-react": "4.7.0",
+		"concurrently": "10.0.4",
+		"electron": "43.3.0",
+		"electron-builder": "26.15.3",
+		"jsdom": "30.0.1",
+		"typescript": "5.9.3",
+		"vite": "5.4.21",
+		"vitest": "3.2.7",
+		"wait-on": "9.1.0"
+	}
+}

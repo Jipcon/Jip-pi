@@ -1,0 +1,17 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"paths": {
+			"@earendil-works/pi-agent-protocol": ["../agent-protocol/dist/index.d.ts"],
+			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"],
+			"@earendil-works/pi-ai/compat": ["../ai/dist/compat.d.ts"],
+			"@earendil-works/pi-ai/*": ["../ai/dist/*"],
+			"@earendil-works/pi-coding-agent": ["../coding-agent/dist/index.d.ts"],
+			"@earendil-works/pi-coding-agent/*": ["../coding-agent/dist/*"]
+		}
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}

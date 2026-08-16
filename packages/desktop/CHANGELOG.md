@@ -1,0 +1,127 @@
+# Changelog
+
+All notable changes to this package will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Custom listbox (`Select.tsx`) replaces the native `<select>` popups in the
+  top bar (OS-rendered popups cannot be styled): surface-overlay panel with
+  strong border and shadow, accent indicator bar + check on the selected
+  option, 120ms open animation, full keyboard navigation (arrows, Home/End,
+  Enter, Escape, typeahead) and listbox ARIA. Provider options carry the
+  billing description as a second line, model options show the context
+  window size, and the thinking panel always shows the full seven-level
+  matrix with a strength meter — levels the current model cannot reach stay
+  visible but disabled with the cap named in the tooltip.
+
+- Multi-session concurrency (SDK mode, default): the Electron main process
+  embeds the Pi coding-agent SDK directly (no extra `pi.exe`), and a
+  two-level backend pool (workspace → session) runs any number of sessions
+  concurrently. Switching the UI focus never tears a session down; A can keep
+  streaming in the background while B prompts, streams and runs tools.
+- Zero-backend host services: model picker, auth status, API keys and OAuth
+  all work before any session exists; the catalog-backend sentinel pattern
+  is gone from the SDK path.
+- Session catalog `createSession` (persisted session identity created through
+  the SDK `SessionManager`, materialized lazily on first use) and
+  `readFullHistory` (full message history parsed by Pi's own session parser).
+- Historical session usage: token/cost totals and context usage are aggregated
+  directly from the persisted JSONL file (`readSessionUsage` in
+  `pi-sdk-adapter`), so the usage bar shows for sessions that were never
+  materialized (no live backend), not just for the active session.
+- Credential changes update one shared host-level runtime state (single
+  catalog invalidation, no per-backend fan-out). Concurrent OAuth logins for
+  the same provider join one in-flight transaction; auth prompt answers route
+  by `authRequestId` on a host-level channel.
+- Session-routed IPC: session requests carry `{ workspaceId, sessionId }`,
+  events arrive in a `RoutedAgentEvent` envelope, and interaction responses
+  route to the owning session backend.
+- Per-session renderer store (`sessionStateById`), per-session interactions,
+  and sidebar indicators for background sessions (running / needs-attention).
+- Target-session rename/delete semantics: renaming or deleting an idle
+  session works while another session runs; deleting the active idle session
+  falls back to another session; deleting a running session is rejected.
+- Idle background session backends are LRU-evicted per workspace
+  (`MAX_IDLE_SESSION_BACKENDS_PER_WORKSPACE = 4`); running, interaction-pending
+  and UI-active sessions are pinned.
+- Async shutdown: `before-quit` waits for backend disposal and auth
+  transaction cleanup before quitting.
+- Packaged SDK support: `scripts/stage-sdk.mjs` stages the coding-agent SDK
+  dependency closure into `resources/sdk/node_modules`, and the
+  electron-builder staged app directory ships it inside `app.asar` so the
+  externalized ESM-only SDK resolves at runtime in packaged builds.
+
+### Changed
+
+- Windows packaging moved from Electron Forge (maker-squirrel) to
+  electron-builder with an assisted NSIS installer: per-user install with
+  an install directory page (`oneClick: false`,
+  `allowToChangeInstallationDirectory: true`), generated uninstaller and
+  Desktop / Start Menu shortcuts. `scripts/stage-app.mjs` assembles the
+  electron-builder app directory at `release/staging` from the vite
+  bundles, the staged SDK closure and the window icon assets, replacing
+  the forge `packageAfterCopy` hook.
+- The dev flow no longer runs through Electron Forge: `npm run dev` starts
+  the renderer Vite server plus main/preload watch builds with
+  `concurrently` and launches Electron directly.
+- The staged SDK closure no longer carries the coding-agent CLI binary
+  (`dist/pi.exe`): the GUI ships its own backend at
+  `resources/backend/pi.exe` and only loads the SDK entry, so the
+  duplicate ~111 MB binary no longer bloats the installer.
+
+- Default backend management is the in-process SDK implementation; the legacy
+  RPC path (`PI_DESKTOP_LEGACY_BACKEND=1`) keeps the original one-workspace /
+  one-active-session behavior for regression comparison.
+- The renderer no longer blocks session switching while streaming.
+- Chat layout: the conversation column is capped at 720px and centered; the
+  "Jip-pi is working" status is a capsule that also carries the live tool
+  count; the usage strip is a full-width status bar with a context-remaining
+  chip (green / warning / danger); sidebar session rows show a relative
+  timestamp and the active session gets a 3px accent indicator bar; the
+  sidebar collapses to a 64px icon rail (manual toggle persisted in local
+  storage, forced below 900px); layout metrics moved into design tokens
+  (`--chat-column-width`, `--sidebar-width(-collapsed)`, `--statusbar-height`).
+- Top bar typography and color: select values now use primary text color
+  (the model name one size/weight up), control labels are quieter, select
+  surfaces lift on hover and show the accent focus ring, and a small amber
+  dot marks any thinking level above "off".
+- Top bar alignment: the runtime selectors moved into a center container
+  that mirrors the chat column geometry, so the Provider select starts
+  exactly above the message content; the brand stays above the sidebar
+  (centered in the rail when collapsed). Session rows no longer show the
+  relative timestamp.
+- Sidebar visual tuning: rows sit on the darker canvas background, unselected
+  titles drop to muted text (selected keeps full contrast), hover lifts one
+  surface step, and project groups breathe wider while rows pack tighter.
+
+### Removed
+
+- `forge.config.js`, the `@electron-forge/*` devDependencies and the
+  `electron-squirrel-startup` dependency (Squirrel.Windows install events
+  no longer apply to the NSIS installer).
+
+- The manual "Collapse" footer bar at the bottom of the expanded sidebar.
+  The collapsed rail keeps its expand button (recovery path), and the
+  below-900px auto-collapse is unaffected.
+
+### Fixed
+
+- `assets/icon.ico` re-encoded from PNG-compressed entries to classic
+  uncompressed BMP entries (same artwork, 16–256 px). The PNG-compressed
+  variant crashed the previous Squirrel installer's WPF progress window
+  (`FileFormatException` decoding `setupIcon.ico`) and aborted the install.
+
+- New (not-yet-materialized) sessions now display their actual default
+  thinking level in the top bar instead of the select's first option
+  ("off"): the predicted level is the settings default clamped to the model
+  the session will materialize with.
+
+- Code block copy button: anchored outside the horizontally scrolling
+  `<pre>` so it no longer scrolls away with long lines; the block's top
+  padding reserves a header band holding the button (top-right) and a
+  decorative `</>` marker (top-left), so neither covers the first code line.

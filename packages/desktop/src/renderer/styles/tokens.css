@@ -1,0 +1,71 @@
+/*
+ * Jip-pi design tokens. The palette stays deliberately flat: hierarchy
+ * comes from luminance, spacing and borders instead of decorative effects.
+ */
+
+:root {
+	color-scheme: dark;
+
+	/* neutral surfaces */
+	--bg: #080808;
+	--canvas: #0b0b0b;
+	--surface: #101010;
+	--surface-raised: #171717;
+	--surface-hover: #202020;
+	--surface-active: #292929;
+	--surface-overlay: #141414;
+
+	/* borders and text */
+	--border: #292929;
+	--border-strong: #3a3a3a;
+	--text: #f5f5f5;
+	--text-secondary: #c7c7c7;
+	--text-muted: #8d8d8d;
+	--text-faint: #5f5f5f;
+
+	/* semantic accents */
+	--accent: #3b82f6;
+	--accent-hover: #60a5fa;
+	--accent-strong: #2563eb;
+	--accent-soft: rgba(59, 130, 246, 0.14);
+	--accent-border: rgba(59, 130, 246, 0.46);
+	--success: #4ade80;
+	--success-soft: rgba(74, 222, 128, 0.11);
+	--danger: #fb7185;
+	--danger-soft: rgba(251, 113, 133, 0.11);
+	--warning: #ffd43b;
+	--warning-soft: rgba(255, 212, 59, 0.13);
+
+	/* derived content colors for the fixed application palette */
+	--text-on-accent: #ffffff;
+	--text-on-accent-hover: #ffffff;
+	--accent-content: #93c5fd;
+	--accent-content-hover: #bfdbfe;
+	--danger-hover: #ff9aa6;
+	--assistant-text: #ededed;
+	--link-hover: #93c5fd;
+	--inline-code-text: #d4d4d4;
+	--code-surface: #1e1e1e;
+	--process-surface: rgba(16, 16, 16, 0.78);
+	--modal-backdrop: rgba(0, 0, 0, 0.76);
+
+	/* shape and depth */
+	--radius-small: 6px;
+	--radius-normal: 10px;
+	--radius-large: 14px;
+	--radius-xlarge: 18px;
+	--shadow-small: 0 8px 24px rgba(0, 0, 0, 0.2);
+	--shadow-large: 0 24px 64px rgba(0, 0, 0, 0.42);
+	--focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.24);
+
+	/* layout metrics: consumed by app.css shell/chat/sidebar rules */
+	--sidebar-width: 278px;
+	--chat-column-width: 720px;
+	--statusbar-height: 30px;
+
+	/* typography: CJK fallbacks keep Chinese UI text on the same optical family */
+	--font-ui:
+		"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC",
+		"Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+	--font-mono: "Cascadia Code", "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas, monospace;
+}

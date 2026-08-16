@@ -1,0 +1,29 @@
+{
+	"name": "@earendil-works/pi-agent-protocol",
+	"version": "0.1.0",
+	"description": "GUI-facing agent backend protocol: generic types shared by desktop UIs and backend adapters",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json"
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"shx": "0.4.0",
+		"typescript": "5.9.3"
+	}
+}

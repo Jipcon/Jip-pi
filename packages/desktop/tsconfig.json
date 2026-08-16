@@ -1,0 +1,27 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"jsx": "react-jsx",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"types": ["node"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"paths": {
+			"@earendil-works/pi-agent-protocol": ["../agent-protocol/src/index.ts"],
+			"@earendil-works/pi-coding-agent": ["../coding-agent/src/index.ts"],
+			"@earendil-works/pi-gui-adapter": ["../pi-gui-adapter/src/index.ts"],
+			"@earendil-works/pi-sdk-adapter": ["../pi-sdk-adapter/src/index.ts"]
+		}
+	},
+	"include": [
+		"src/**/*.ts",
+		"src/**/*.tsx",
+		"test/**/*.ts",
+		"test/**/*.tsx",
+		"vite.*.config.mjs",
+		"forge.config.js",
+		"vitest.config.ts"
+	],
+	"exclude": ["node_modules", "dist", ".vite"]
+}

@@ -1,0 +1,35 @@
+{
+	"name": "@earendil-works/pi-gui-adapter",
+	"version": "0.1.0",
+	"description": "PiAdapter: implements the AgentBackend protocol over the Pi RPC mode subprocess protocol",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"test": "vitest --run"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-protocol": "^0.1.0"
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"shx": "0.4.0",
+		"typescript": "5.9.3",
+		"vitest": "4.1.9"
+	}
+}
