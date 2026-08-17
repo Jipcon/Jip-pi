@@ -45,7 +45,6 @@ todo.md
 plans/
 
 # Local / personal
-.workbuddy/
 AGENTS.md
 .pi/
 test.sh
@@ -57,3 +56,4 @@ output/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+a.ps1
