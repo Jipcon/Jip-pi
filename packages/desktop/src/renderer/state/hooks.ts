@@ -10,7 +10,13 @@ import type {
 	UserMessage,
 } from "@earendil-works/pi-agent-protocol";
 import { useEffect, useSyncExternalStore } from "react";
-import type { BackendStatus, CustomProviderConfig, SessionStorageConfig } from "../../shared/ipc.ts";
+import type {
+	BackendStatus,
+	CustomProviderConfig,
+	CustomProviderFetchedModel,
+	CustomProviderFetchRequest,
+	SessionStorageConfig,
+} from "../../shared/ipc.ts";
 import { workspacePathsEqual } from "../../shared/workspace-path.ts";
 import { AgentStore } from "./store.ts";
 
@@ -575,6 +581,13 @@ export async function saveCustomProvider(config: CustomProviderConfig): Promise<
 export async function deleteCustomProvider(providerId: string): Promise<void> {
 	await window.agent.deleteCustomProvider(providerId);
 	await Promise.all([refreshModels(), refreshProviderAuth()]);
+}
+
+/** Fetch the provider's available model list through the main process. */
+export async function fetchCustomProviderModels(
+	request: CustomProviderFetchRequest,
+): Promise<CustomProviderFetchedModel[]> {
+	return window.agent.fetchCustomProviderModels(request);
 }
 
 /**

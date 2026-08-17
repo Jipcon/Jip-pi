@@ -28,6 +28,8 @@ import {
 	type BackendStatus,
 	type CommandResult,
 	type CustomProviderConfig,
+	type CustomProviderFetchedModel,
+	type CustomProviderFetchRequest,
 	IPC,
 	type RoutedAgentEvent,
 	type SessionSnapshot,
@@ -95,6 +97,8 @@ const api = {
 		invokeCommand<void>(IPC.customProvidersSave, config),
 	deleteCustomProvider: (providerId: string): Promise<void> =>
 		invokeCommand<void>(IPC.customProvidersDelete, providerId),
+	fetchCustomProviderModels: (request: CustomProviderFetchRequest): Promise<CustomProviderFetchedModel[]> =>
+		invokeCommand<CustomProviderFetchedModel[]>(IPC.customProvidersFetchModels, request),
 	setModel: (workspaceId: string, sessionId: string, model: ModelRef): Promise<ModelInfo | null> =>
 		invokeCommand<ModelInfo | null>(IPC.agentSetModel, workspaceId, sessionId, model),
 	listThinkingLevels: (workspaceId: string, sessionId: string): Promise<string[]> =>

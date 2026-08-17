@@ -24,12 +24,13 @@ import {
 	SdkHostServices,
 } from "@earendil-works/pi-sdk-adapter";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import type { CustomProviderConfig } from "../shared/ipc.ts";
+import type { CustomProviderConfig, CustomProviderFetchRequest } from "../shared/ipc.ts";
 import { DEFAULT_SESSION_STORAGE, IPC, type SessionStorageConfig } from "../shared/ipc.ts";
 import { workspacePathsEqual } from "../shared/workspace-path.ts";
 import { createAgentEventForwarder } from "./agent-event-forwarder.ts";
 import { AgentHost, agentDirPath } from "./agent-host.ts";
 import type { DesktopAgentRuntime } from "./agent-runtime.ts";
+import { fetchProviderModels } from "./custom-provider-fetch.ts";
 import { deleteCustomProvider, listCustomProviders, saveCustomProvider } from "./custom-providers-store.ts";
 import {
 	type DesktopSettings,
@@ -449,6 +450,10 @@ function registerIpc(): void {
 			deleteCustomProvider(modelsJsonPath(), providerId);
 			await runtime.reloadModels();
 		}),
+	);
+
+	ipcMain.handle(IPC.customProvidersFetchModels, (_event, request: CustomProviderFetchRequest) =>
+		toCommandResult(() => fetchProviderModels(request)),
 	);
 
 	ipcMain.handle(

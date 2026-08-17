@@ -59,6 +59,7 @@ const mockAgent: AgentApi = {
 	listCustomProviders: vi.fn(async () => []),
 	saveCustomProvider: vi.fn(async () => {}),
 	deleteCustomProvider: vi.fn(async () => {}),
+	fetchCustomProviderModels: vi.fn(async () => []),
 	setModel: vi.fn(async () => null),
 	listThinkingLevels: vi.fn(async () => ["off", "medium", "high"]),
 	setThinkingLevel: vi.fn(async () => {}),
@@ -130,6 +131,7 @@ export function resetMockAgent(): void {
 	vi.mocked(mockAgent.listCustomProviders).mockClear().mockResolvedValue([]);
 	vi.mocked(mockAgent.saveCustomProvider).mockClear().mockResolvedValue();
 	vi.mocked(mockAgent.deleteCustomProvider).mockClear().mockResolvedValue();
+	vi.mocked(mockAgent.fetchCustomProviderModels).mockClear().mockResolvedValue([]);
 	vi.mocked(mockAgent.setModel).mockClear().mockResolvedValue(null);
 	vi.mocked(mockAgent.listThinkingLevels).mockClear().mockResolvedValue(["off", "medium", "high"]);
 	vi.mocked(mockAgent.setThinkingLevel).mockClear().mockResolvedValue();

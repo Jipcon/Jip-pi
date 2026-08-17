@@ -3084,6 +3084,70 @@ textarea:focus-visible {
 	font-weight: 650;
 }
 
+.custom-provider-subsection-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.custom-provider-fetched {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-normal);
+	background: var(--surface);
+}
+
+.custom-provider-fetched-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	color: var(--text-secondary);
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.custom-provider-fetched-list {
+	display: flex;
+	flex-direction: column;
+	max-height: 180px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.custom-provider-fetched-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 2px;
+	cursor: pointer;
+}
+
+.custom-provider-fetched-row:hover {
+	background: var(--surface-hover);
+}
+
+.custom-provider-fetched-row input {
+	margin: 0;
+	accent-color: var(--accent);
+}
+
+.custom-provider-fetched-id {
+	overflow: hidden;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.custom-provider-fetched-meta {
+	flex: 0 0 auto;
+	color: var(--text-faint);
+	font-size: 11px;
+}
+
 .custom-provider-kv-row,
 .custom-provider-model-line {
 	display: flex;

@@ -44,6 +44,7 @@ export const IPC = {
 	customProvidersList: "customProviders:list",
 	customProvidersSave: "customProviders:save",
 	customProvidersDelete: "customProviders:delete",
+	customProvidersFetchModels: "customProviders:fetchModels",
 	agentListThinkingLevels: "agent:listThinkingLevels",
 	agentSetThinkingLevel: "agent:setThinkingLevel",
 	authListStatus: "auth:listStatus",
@@ -124,6 +125,28 @@ export interface CustomProviderConfig {
 	headers?: Record<string, string>;
 	/** Models to register under this provider. Replaces the provider's list. */
 	models: CustomProviderModelConfig[];
+}
+
+/**
+ * One-shot model-list fetch request. The apiKey is used only for the fetch
+ * request itself and is never persisted to models.json by this path; the
+ * dialog stores it through the credential API on save instead.
+ */
+export interface CustomProviderFetchRequest {
+	baseUrl: string;
+	api: CustomProviderApi;
+	apiKey?: string;
+}
+
+/** One model returned by the provider's model-list endpoint. */
+export interface CustomProviderFetchedModel {
+	id: string;
+	/** Display name, when the endpoint provides one. */
+	name?: string;
+	/** Context window in tokens, when the endpoint provides one. */
+	contextWindow?: number;
+	/** Maximum output tokens, when the endpoint provides one. */
+	maxTokens?: number;
 }
 
 export interface CommandResult<T = undefined> {

@@ -12,6 +12,8 @@ import type { ProviderAuthStatus } from "@earendil-works/pi-agent-protocol";
 import type { DiagnosticEntry } from "../state/store.ts";
 import type {
 	CustomProviderConfig,
+	CustomProviderFetchedModel,
+	CustomProviderFetchRequest,
 	SessionStorageConfig,
 	SessionStorageMode,
 } from "../../shared/ipc.ts";
@@ -51,6 +53,7 @@ export function SettingsPanel({
 	onSaveCustomProvider,
 	onDeleteCustomProvider,
 	onReloadModels,
+	onFetchCustomProviderModels,
 	onClose,
 }: {
 	logs: string[];
@@ -73,6 +76,7 @@ export function SettingsPanel({
 	onSaveCustomProvider?: (config: CustomProviderConfig) => Promise<void>;
 	onDeleteCustomProvider?: (providerId: string) => Promise<void>;
 	onReloadModels?: () => Promise<void>;
+	onFetchCustomProviderModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const [activeSection, setActiveSection] = useState<SettingsSection>("general");
@@ -202,12 +206,20 @@ export function SettingsPanel({
 		setAuthBusyProvider(null);
 	};
 
-	const saveCustomProvider = async (config: CustomProviderConfig): Promise<void> => {
+	const saveCustomProvider = async (config: CustomProviderConfig, apiKey?: string): Promise<void> => {
 		if (!onSaveCustomProvider) return;
 		setCustomBusy(true);
 		setCustomError(null);
 		try {
 			await onSaveCustomProvider(config);
+			// The dialog's optional API key powers the model-list fetch; store it
+			// through the credential API (auth.json) so models.json stays
+			// secret-free. Saving is idempotent (upsert), so a retry after a key
+			// failure re-applies both steps safely.
+			const trimmedKey = apiKey?.trim();
+			if (trimmedKey && onSaveApiKey) {
+				await onSaveApiKey(config.id, trimmedKey);
+			}
 			setCustomDialog(null);
 			await refreshCustomProviders();
 		} catch (error) {
@@ -454,7 +466,8 @@ export function SettingsPanel({
 					initial={customDialog.mode === "edit" ? customDialog.config : undefined}
 					busy={customBusy}
 					error={customError}
-					onSave={(config) => saveCustomProvider(config)}
+					onSave={(config, apiKey) => saveCustomProvider(config, apiKey)}
+					onFetchModels={onFetchCustomProviderModels}
 					onClose={() => {
 						setCustomDialog(null);
 						setCustomError(null);

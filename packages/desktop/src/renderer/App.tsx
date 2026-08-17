@@ -32,6 +32,7 @@ import { WorkspacePicker } from "./components/WorkspacePicker.tsx";
 import {
 	cancelOAuthLogin,
 	deleteCustomProvider,
+	fetchCustomProviderModels,
 	listCustomProviders,
 	loginProviderOAuth,
 	pickWorkspaceAndStart,
@@ -326,6 +327,7 @@ export function App(): React.JSX.Element {
 					onSaveCustomProvider={saveCustomProvider}
 					onDeleteCustomProvider={deleteCustomProvider}
 					onReloadModels={reloadModelCatalog}
+					onFetchCustomProviderModels={fetchCustomProviderModels}
 					onClose={closeSettings}
 				/>
 			)}

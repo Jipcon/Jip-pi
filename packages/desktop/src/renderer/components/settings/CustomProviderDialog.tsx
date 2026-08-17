@@ -3,14 +3,21 @@
  * definition persisted to ~/.pi/agent/models.json.
  *
  * The form owns only the GUI-managed subset of a models.json provider entry
- * (id, name, baseUrl, api, authHeader, headers, models). The API key is
- * deliberately not collected here: after saving, the user stores a key
- * through the existing API-key dialog (auth.json), so secrets never land in
- * models.json via the GUI.
+ * (id, name, baseUrl, api, authHeader, headers, models). An optional API key
+ * input powers the one-shot model-list fetch and is stored through the
+ * credential API (auth.json) on save — it is never written into models.json
+ * by this dialog.
  */
 
 import { useState } from "react";
-import type { CustomProviderApi, CustomProviderConfig, CustomProviderModelConfig } from "../../../shared/ipc.ts";
+import type {
+	CustomProviderApi,
+	CustomProviderConfig,
+	CustomProviderFetchedModel,
+	CustomProviderFetchRequest,
+	CustomProviderModelConfig,
+} from "../../../shared/ipc.ts";
+import { redactCredentialText } from "../../state/redact.ts";
 import { Icon } from "../Icon.tsx";
 
 const API_OPTIONS: { value: CustomProviderApi; label: string }[] = [
@@ -58,12 +65,14 @@ export function CustomProviderDialog({
 	busy,
 	error,
 	onSave,
+	onFetchModels,
 	onClose,
 }: {
 	initial?: CustomProviderConfig;
 	busy: boolean;
 	error: string | null;
-	onSave: (config: CustomProviderConfig) => Promise<void>;
+	onSave: (config: CustomProviderConfig, apiKey?: string) => Promise<void>;
+	onFetchModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const editing = initial !== undefined;
@@ -71,12 +80,17 @@ export function CustomProviderDialog({
 	const [name, setName] = useState(initial?.name ?? "");
 	const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
 	const [api, setApi] = useState<CustomProviderApi>(initial?.api ?? "openai-completions");
+	const [apiKey, setApiKeyDraft] = useState("");
 	const [authHeader, setAuthHeader] = useState(initial?.authHeader === true);
 	const [headers, setHeaders] = useState<{ key: string; value: string }[]>(
 		initial?.headers ? Object.entries(initial.headers).map(([key, value]) => ({ key, value })) : [],
 	);
 	const [models, setModels] = useState<ModelDraft[]>(initial?.models ? initial.models.map(toDraft) : [emptyDraft()]);
 	const [validationError, setValidationError] = useState<string | null>(null);
+	const [fetching, setFetching] = useState(false);
+	const [fetchedModels, setFetchedModels] = useState<CustomProviderFetchedModel[]>([]);
+	const [selectedFetched, setSelectedFetched] = useState<ReadonlySet<string>>(new Set());
+	const [fetchError, setFetchError] = useState<string | null>(null);
 
 	const addHeader = (): void => setHeaders((prev) => [...prev, { key: "", value: "" }]);
 	const updateHeader = (index: number, field: "key" | "value", value: string): void =>
@@ -89,6 +103,62 @@ export function CustomProviderDialog({
 		setModels((prev) => prev.map((draft, i) => (i === index ? { ...draft, ...patch } : draft)));
 	const removeModel = (index: number): void =>
 		setModels((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+
+	const fetchModels = async (): Promise<void> => {
+		if (!onFetchModels) return;
+		const trimmedBaseUrl = baseUrl.trim();
+		if (trimmedBaseUrl.length === 0) {
+			setFetchError("Enter a base URL before fetching models");
+			return;
+		}
+		setFetching(true);
+		setFetchError(null);
+		try {
+			const models = await onFetchModels({
+				baseUrl: trimmedBaseUrl,
+				api,
+				apiKey: apiKey.trim() || undefined,
+			});
+			if (models.length === 0) {
+				setFetchedModels([]);
+				setSelectedFetched(new Set());
+				setFetchError("The endpoint returned no models");
+				return;
+			}
+			setFetchedModels(models);
+			setSelectedFetched(new Set(models.map((model) => model.id)));
+		} catch (error) {
+			setFetchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
+		} finally {
+			setFetching(false);
+		}
+	};
+
+	const toggleFetched = (modelId: string): void =>
+		setSelectedFetched((prev) => {
+			const next = new Set(prev);
+			if (next.has(modelId)) next.delete(modelId);
+			else next.add(modelId);
+			return next;
+		});
+
+	const allSelected = fetchedModels.length > 0 && fetchedModels.every((model) => selectedFetched.has(model.id));
+
+	const toggleAllFetched = (): void =>
+		setSelectedFetched(allSelected ? new Set() : new Set(fetchedModels.map((model) => model.id)));
+
+	const addSelectedFetched = (): void => {
+		const existing = new Set(models.map((draft) => draft.id.trim()).filter((modelId) => modelId.length > 0));
+		const additions = fetchedModels
+			.filter((model) => selectedFetched.has(model.id) && !existing.has(model.id))
+			.map(toDraft);
+		if (additions.length > 0) {
+			setModels((prev) => [...prev, ...additions]);
+		}
+		setFetchedModels([]);
+		setSelectedFetched(new Set());
+		setFetchError(null);
+	};
 
 	const save = async (): Promise<void> => {
 		const trimmedId = id.trim();
@@ -139,7 +209,7 @@ export function CustomProviderDialog({
 		if (authHeader) config.authHeader = true;
 		if (Object.keys(serializedHeaders).length > 0) config.headers = serializedHeaders;
 		setValidationError(null);
-		await onSave(config);
+		await onSave(config, apiKey.trim() || undefined);
 	};
 
 	const displayedError = validationError ?? error;
@@ -158,8 +228,8 @@ export function CustomProviderDialog({
 				</div>
 				<div className="modal-body">
 					<p className="settings-note">
-						Writes an entry to <code>~/.pi/agent/models.json</code>. After saving, set its API key in the
-						provider list below.
+						Writes an entry to <code>~/.pi/agent/models.json</code>. If you enter an API key it is stored
+						through the credential API on save — never written into models.json.
 					</p>
 					<div className="custom-provider-form">
 						<label className="settings-field">
@@ -219,6 +289,20 @@ export function CustomProviderDialog({
 									</option>
 								))}
 							</select>
+						</label>
+						<label className="settings-field">
+							<span>API key (optional)</span>
+							<input
+								type="password"
+								className="modal-input"
+								placeholder="Used to fetch the model list; stored on save"
+								value={apiKey}
+								autoComplete="off"
+								spellCheck={false}
+								disabled={busy}
+								onChange={(event) => setApiKeyDraft(event.target.value)}
+								data-testid="custom-provider-api-key"
+							/>
 						</label>
 						<label className="settings-toggle">
 							<input
@@ -288,16 +372,78 @@ export function CustomProviderDialog({
 						<div className="custom-provider-subsection">
 							<div className="custom-provider-subsection-header">
 								<span>Models</span>
-								<button
-									type="button"
-									className="btn btn-small"
-									disabled={busy}
-									onClick={addModel}
-									data-testid="custom-provider-add-model"
-								>
-									Add model
-								</button>
+								<div className="custom-provider-subsection-actions">
+									{onFetchModels && (
+										<button
+											type="button"
+											className="btn btn-small"
+											disabled={busy || fetching || baseUrl.trim().length === 0}
+											onClick={() => void fetchModels()}
+											data-testid="custom-provider-fetch"
+										>
+											{fetching ? "Fetching…" : "Fetch models"}
+										</button>
+									)}
+									<button
+										type="button"
+										className="btn btn-small"
+										disabled={busy}
+										onClick={addModel}
+										data-testid="custom-provider-add-model"
+									>
+										Add model
+									</button>
+								</div>
 							</div>
+							{fetchError && <p className="settings-error">{fetchError}</p>}
+							{fetchedModels.length > 0 && (
+								<div className="custom-provider-fetched" data-testid="custom-provider-fetched">
+									<div className="custom-provider-fetched-header">
+										<span>{fetchedModels.length} models found — select which to add</span>
+										<button
+											type="button"
+											className="btn btn-small"
+											disabled={busy}
+											onClick={toggleAllFetched}
+											data-testid="custom-provider-toggle-all"
+										>
+											{allSelected ? "Select none" : "Select all"}
+										</button>
+									</div>
+									<div className="custom-provider-fetched-list">
+										{fetchedModels.map((model) => (
+											<label className="custom-provider-fetched-row" key={model.id}>
+												<input
+													type="checkbox"
+													checked={selectedFetched.has(model.id)}
+													disabled={busy}
+													onChange={() => toggleFetched(model.id)}
+													data-testid={`fetched-model-check-${model.id}`}
+												/>
+												<span className="custom-provider-fetched-id">{model.id}</span>
+												{model.name !== undefined && (
+													<span className="custom-provider-fetched-meta">{model.name}</span>
+												)}
+												{model.contextWindow !== undefined && (
+													<span className="custom-provider-fetched-meta">context {model.contextWindow}</span>
+												)}
+												{model.maxTokens !== undefined && (
+													<span className="custom-provider-fetched-meta">max out {model.maxTokens}</span>
+												)}
+											</label>
+										))}
+									</div>
+									<button
+										type="button"
+										className="btn btn-small"
+										disabled={busy || selectedFetched.size === 0}
+										onClick={addSelectedFetched}
+										data-testid="custom-provider-add-selected"
+									>
+										Add selected ({selectedFetched.size})
+									</button>
+								</div>
+							)}
 							{models.map((draft, index) => (
 								<div className="custom-provider-model-row" key={index} data-testid={`custom-provider-model-${index}`}>
 									<div className="custom-provider-model-line">

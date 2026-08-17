@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `deleteCustomProvider` on the `window.agent` bridge and adds the
   `models:reload` / `customProviders:list|save|delete` IPC channels.
 
+- Custom provider model discovery: the provider form has a "Fetch models"
+  button that queries the provider's model-list endpoint from the main
+  process (renderer fetches would hit CORS) and renders a checkbox list to
+  pick which models to add. Endpoint candidates follow the cc-switch
+  strategy — `{base}/v1/models`, `{base}/models` when the base URL already
+  ends in an OpenAI-style `/v{N}` version segment, plus stripped-path
+  fallbacks for known Anthropic-protocol compat suffixes — tried in order
+  with fall-through on 404/405. Auth headers follow the API type
+  (`x-api-key` for anthropic-messages, `x-goog-api-key` for
+  google-generative-ai, Bearer otherwise); error bodies are redacted and
+  truncated. Google endpoints contribute context/output token limits to the
+  fetched rows. An optional API-key field powers the fetch and is stored
+  through the credential API (auth.json) on save — models.json still never
+  contains keys. Adds the `customProviders:fetchModels` IPC channel and
+  `fetchCustomProviderModels` bridge method.
+
 - Custom listbox (`Select.tsx`) replaces the native `<select>` popups in the
   top bar (OS-rendered popups cannot be styled): surface-overlay panel with
   strong border and shadow, accent indicator bar + check on the selected

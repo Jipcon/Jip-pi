@@ -2142,4 +2142,89 @@ describe("SettingsPanel custom providers", () => {
 		await waitFor(() => expect(onSaveCustomProvider).toHaveBeenCalledTimes(1));
 		expect(onSaveCustomProvider.mock.calls[0][0]).toMatchObject({ id: "new", baseUrl: "http://y", api: "openai-completions" });
 	});
+
+	test("saving with an api key stores it through the credential API after saving the provider", async () => {
+		const onSaveCustomProvider = vi.fn(async () => {});
+		const onSaveApiKey = vi.fn(async () => {});
+		render(
+			<SettingsPanel
+				logs={[]}
+				showThinking={false}
+				showToolDetails={false}
+				showTurnStatus={true}
+				onShowTurnStatusChange={vi.fn()}
+				sessionStorage={{ mode: "default" }}
+				storageBusy={false}
+				onShowThinkingChange={vi.fn()}
+				onShowToolDetailsChange={vi.fn()}
+				onPickSessionStorageRoot={vi.fn(async () => null)}
+				onSessionStorageChange={vi.fn(async () => {})}
+				onListCustomProviders={vi.fn(async () => [])}
+				onSaveCustomProvider={onSaveCustomProvider}
+				onDeleteCustomProvider={vi.fn(async () => {})}
+				onReloadModels={vi.fn(async () => {})}
+				onSaveApiKey={onSaveApiKey}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByTestId("settings-nav-providers"));
+		fireEvent.click(screen.getByTestId("custom-providers-add"));
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "new" } });
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://y" } });
+		fireEvent.change(screen.getByTestId("custom-provider-api-key"), { target: { value: "sk-test" } });
+		fireEvent.change(screen.getByTestId("custom-provider-model-id-0"), { target: { value: "m1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSaveApiKey).toHaveBeenCalledWith("new", "sk-test"));
+		expect(onSaveCustomProvider).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("CustomProviderDialog model fetch", () => {
+	test("fetch renders a checklist and add selected appends the chosen models", async () => {
+		const onFetchModels = vi.fn(async () => [
+			{ id: "model-a" },
+			{ id: "model-b", name: "Model B", contextWindow: 128000 },
+		]);
+		const onSave = vi.fn(async () => {});
+		render(<CustomProviderDialog busy={false} error={null} onSave={onSave} onFetchModels={onFetchModels} onClose={vi.fn()} />);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://localhost:11434/v1" } });
+		fireEvent.change(screen.getByTestId("custom-provider-api-key"), { target: { value: "sk-test" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(screen.getByTestId("custom-provider-fetched")).toBeTruthy());
+		expect(onFetchModels).toHaveBeenCalledWith({
+			baseUrl: "http://localhost:11434/v1",
+			api: "openai-completions",
+			apiKey: "sk-test",
+		});
+		expect((screen.getByTestId("fetched-model-check-model-a") as HTMLInputElement).checked).toBe(true);
+		expect(screen.getByText("Model B")).toBeTruthy();
+		expect(screen.getByText(/context 128000/)).toBeTruthy();
+		// Deselect model-a; only model-b is added as a row.
+		fireEvent.click(screen.getByTestId("fetched-model-check-model-a"));
+		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
+		expect(screen.queryByTestId("custom-provider-fetched")).toBeNull();
+		expect((screen.getByTestId("custom-provider-model-id-1") as HTMLInputElement).value).toBe("model-b");
+		// Saving carries the api key as the second argument.
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "my-local" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+		expect(onSave.mock.calls[0][1]).toBe("sk-test");
+	});
+
+	test("fetch failures show inline without losing the draft", async () => {
+		const onFetchModels = vi.fn(async () => {
+			throw new Error("HTTP 401: invalid api key");
+		});
+		render(<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onFetchModels={onFetchModels} onClose={vi.fn()} />);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://localhost:11434/v1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(screen.getByText(/HTTP 401/)).toBeTruthy());
+		expect((screen.getByTestId("custom-provider-base-url") as HTMLInputElement).value).toBe("http://localhost:11434/v1");
+		expect(screen.queryByTestId("custom-provider-fetched")).toBeNull();
+	});
+
+	test("fetch button is hidden when the host does not provide onFetchModels", () => {
+		render(<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onClose={vi.fn()} />);
+		expect(screen.queryByTestId("custom-provider-fetch")).toBeNull();
+	});
 });
