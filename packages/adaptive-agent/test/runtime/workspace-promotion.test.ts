@@ -1,5 +1,5 @@
-import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -168,35 +168,37 @@ describe("workspace promotion", () => {
 	it("an apply-phase failure on a locked foreground path rolls back cleanly", async () => {
 		const { root, manager } = await newRepo();
 		await writeFile(join(root, "u.txt"), "u\n");
+		// u.txt is read-only at capture time so its mode is baked into the
+		// fingerprint; the candidate is materialized writable (copyFile does
+		// not preserve mode), so the test can still modify it.
+		await chmod(join(root, "u.txt"), 0o444);
 		const snapshot = await manager.capture({ sourceRoot: root, logicalRoot: "/w" });
 		const lease = await manager.fork(snapshot, "c1");
+		// copyFile preserves the read-only attribute on Windows; make the
+		// candidate writable so the test can stage its modification (a no-op
+		// on POSIX, where copyFile does not preserve mode).
+		await chmod(join(lease.root, "u.txt"), 0o644);
 		await writeFile(join(lease.root, "u.txt"), "u candidate\n");
-		// A PowerShell child holds u.txt with FileShare.None so the promotion's
-		// same-volume rename fails during the apply phase.
-		const locker = spawn(
-			"powershell",
-			[
-				"-NoProfile",
-				"-Command",
-				`$f = [System.IO.File]::Open(${JSON.stringify(join(root, "u.txt"))}, 'Open', 'Read', 'None'); Start-Sleep -Seconds 60`,
-			],
-			{ stdio: "ignore", windowsHide: true },
-		);
+		// Lock the foreground root in the winner verifier. The fingerprint
+		// recomputes unchanged (u.txt's mode and content are unchanged, and
+		// the repo root's mode is not in the manifest), so the gates pass and
+		// the apply fails: on POSIX an unwritable root denies the temp-file
+		// write; on Windows the rename over the read-only u.txt is denied.
+		// Either way the apply rolls back with the foreground untouched.
 		try {
-			await new Promise((resolve) => setTimeout(resolve, 800));
-			// The lock may surface in the preimage read (typed conflict, zero
-			// writes) or in the apply rename (rollback); both are safe outcomes
-			// that leave the foreground unchanged.
-			try {
-				const result = await manager.promote({ lease });
-				expect(result.status).toBe("rolled_back");
-			} catch (error) {
-				expect(error).toBeInstanceOf(PromotionConflictError);
-			}
+			const result = await manager.promote({
+				lease,
+				verifier: async () => {
+					await chmod(root, 0o555);
+				},
+			});
+			expect(result.status).toBe("rolled_back");
+		} catch (error) {
+			expect(error).toBeInstanceOf(PromotionConflictError);
 		} finally {
-			locker.kill();
-			await new Promise((resolve) => setTimeout(resolve, 300));
-			await lease.release();
+			await chmod(root, 0o755).catch(() => undefined);
+			await chmod(join(root, "u.txt"), 0o644).catch(() => undefined);
+			await lease.release().catch(() => undefined);
 		}
 		expect(await readFile(join(root, "u.txt"), "utf8")).toBe("u\n");
 	});

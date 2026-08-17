@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import {
 	WorkspaceOrphanedError,
 	workspaceLeaseId,
 } from "../../src/index.ts";
+import { holdWorktree } from "./workspace-lock-helper.ts";
 
 const it = (name: string, fn: () => Promise<void> | void, timeout = 30_000) => vitestIt(name, fn, timeout);
 
@@ -208,18 +209,18 @@ describe("workspace recovery", () => {
 		const { root, manager } = await newRepo();
 		const snapshot = await manager.capture({ sourceRoot: root, logicalRoot: "/w" });
 		const lease = await manager.fork(snapshot, "c1");
-		const holder = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-			cwd: lease.root,
-			stdio: "ignore",
-			windowsHide: true,
-		});
-		await new Promise((resolve) => setTimeout(resolve, 600));
-		await expect(lease.release()).rejects.toBeInstanceOf(WorkspaceOrphanedError);
-		const whileLocked = await manager.recover();
-		expect(whileLocked.remainingOrphans).toContain(lease.id);
-		holder.kill();
-		await new Promise((resolve) => setTimeout(resolve, 600));
-		const settled = await manager.recover();
-		expect(settled.remainingOrphans).toEqual([]);
+		const lock = holdWorktree(lease.root);
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 600));
+			await expect(lease.release()).rejects.toBeInstanceOf(WorkspaceOrphanedError);
+			const whileLocked = await manager.recover();
+			expect(whileLocked.remainingOrphans).toContain(lease.id);
+			lock.release();
+			await new Promise((resolve) => setTimeout(resolve, 600));
+			const settled = await manager.recover();
+			expect(settled.remainingOrphans).toEqual([]);
+		} finally {
+			lock.release();
+		}
 	});
 });

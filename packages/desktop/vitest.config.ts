@@ -14,6 +14,10 @@ export default defineConfig({
 				find: /^@earendil-works\/pi-gui-adapter$/,
 				replacement: fileURLToPath(new URL("../pi-gui-adapter/src/index.ts", import.meta.url)),
 			},
+			{
+				find: /^@earendil-works\/pi-sdk-adapter$/,
+				replacement: fileURLToPath(new URL("../pi-sdk-adapter/src/index.ts", import.meta.url)),
+			},
 		],
 	},
 	test: {

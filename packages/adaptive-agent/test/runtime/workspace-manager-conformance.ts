@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +26,7 @@ import {
 	WorkspaceSnapshotNotFoundError,
 	type WorkspaceSnapshotRef,
 } from "../../src/index.ts";
+import { holdWorktree } from "./workspace-lock-helper.ts";
 
 /**
  * One WorkspaceManager conformance suite runs against both backends with
@@ -411,16 +411,13 @@ export function createWorkspaceManagerConformance(options: ConformanceSuiteOptio
 		await tracked(session, { "a.txt": "one\n" });
 		const snapshot = await capture(session);
 		const lease = await fork(session, snapshot, "c1");
-		// A child process whose cwd is inside the worktree holds the directory.
-		const holder = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-			cwd: lease.root,
-			stdio: "ignore",
-			windowsHide: true,
-		});
-		session.processes.push({ kill: () => holder.kill() });
+		// Hold the worktree so the manager cannot remove it: the lease is
+		// orphaned, and recover() finishes it once the lock clears.
+		const lock = holdWorktree(lease.root);
+		session.processes.push({ kill: () => lock.release() });
 		await new Promise((resolve) => setTimeout(resolve, 700));
 		await expect(lease.release()).rejects.toBeInstanceOf(WorkspaceOrphanedError);
-		holder.kill();
+		lock.release();
 		await new Promise((resolve) => setTimeout(resolve, 700));
 		const report = await session.manager.recover();
 		expect(report.leases.released).toBeGreaterThanOrEqual(1);

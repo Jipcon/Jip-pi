@@ -1,7 +1,7 @@
 /**
  * OpenCode Go catalog drift test.
  *
- * Baseline snapshot of the current official 18-model Go catalog. Any change
+ * Baseline snapshot of the current official 19-model Go catalog. Any change
  * to the model set, endpoint, or high-risk model compatibility is a signal
  * that real-network validation is required before shipping: update this test
  * only after re-validating against the live Go endpoint and recording the
@@ -28,12 +28,16 @@ function goCatalog(): Record<string, CatalogEntry> {
 	return Object.fromEntries(models.map((model) => [model.id, model as CatalogEntry]));
 }
 
-/** Verified against the live Go endpoint on 2026-08-08 (no network here). */
+/** Verified against the live Go endpoint on 2026-08-17 (no network here):
+ * glm-5.3 added to the catalog; deepseek-v4-flash now routes via
+ * openai-completions (both openai-completions and anthropic-messages accept
+ * it live, but models.dev now reports openai-completions). */
 const BASELINE_IDS = [
 	"deepseek-v4-flash",
 	"deepseek-v4-pro",
 	"glm-5.1",
 	"glm-5.2",
+	"glm-5.3",
 	"gpt-5.6-luna",
 	"grok-4.5",
 	"hy3",
@@ -58,7 +62,7 @@ const BASELINE_ENDPOINTS: Record<string, string> = {
 };
 
 describe("OpenCode Go catalog baseline", () => {
-	test("the official 18-model set is present with no unexpected additions", () => {
+	test("the official 19-model set is present with no unexpected additions", () => {
 		const catalog = goCatalog();
 		expect(Object.keys(catalog).sort()).toEqual([...BASELINE_IDS].sort());
 	});
@@ -74,7 +78,7 @@ describe("OpenCode Go catalog baseline", () => {
 		const catalog = goCatalog();
 		const expectations: Record<string, Partial<CatalogEntry>> = {
 			"kimi-k3": { api: "openai-completions", reasoning: true },
-			"deepseek-v4-flash": { api: "anthropic-messages", reasoning: true },
+			"deepseek-v4-flash": { api: "openai-completions", reasoning: true },
 			"grok-4.5": { api: "openai-responses", reasoning: true },
 			"minimax-m2.7": { api: "openai-completions", reasoning: true },
 			"qwen3.6-plus": { api: "openai-completions", reasoning: true },
