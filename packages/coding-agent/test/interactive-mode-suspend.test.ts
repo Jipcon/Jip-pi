@@ -23,9 +23,15 @@ function callHandleCtrlZ(context: HandleCtrlZThis): void {
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown;
 
+let platformDescriptor: PropertyDescriptor | undefined;
+
 describe("InteractiveMode.handleCtrlZ", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
+		if (platformDescriptor) {
+			Object.defineProperty(process, "platform", platformDescriptor);
+			platformDescriptor = undefined;
+		}
 	});
 
 	test("shows a status message and skips suspend on Windows", () => {
@@ -36,7 +42,7 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		};
 		const showStatus = vi.fn();
 		const context: HandleCtrlZThis & { showStatus: (message: string) => void } = { ui, showStatus };
-		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 		Object.defineProperty(process, "platform", {
 			configurable: true,
 			value: "win32",
@@ -46,13 +52,7 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		const processOnceSpy = vi.spyOn(process, "once");
 		const processKillSpy = vi.spyOn(process, "kill");
 
-		try {
-			callHandleCtrlZ(context);
-		} finally {
-			if (platformDescriptor) {
-				Object.defineProperty(process, "platform", platformDescriptor);
-			}
-		}
+		callHandleCtrlZ(context);
 
 		expect(showStatus).toHaveBeenCalledWith("Suspend to background is not supported on Windows");
 		expect(ui.stop).not.toHaveBeenCalled();
@@ -71,6 +71,8 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		const context: HandleCtrlZThis = { ui };
 		const keepAliveHandle = setTimeout(() => undefined, 0);
 		clearTimeout(keepAliveHandle);
+		platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
 
 		let sigintHandler: ProcessSignalHandler | undefined;
 		let sigcontHandler: ProcessSignalHandler | undefined;
@@ -122,6 +124,8 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		const keepAliveHandle = setTimeout(() => undefined, 0);
 		clearTimeout(keepAliveHandle);
 		const suspendError = new Error("suspend failed");
+		platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
 
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(keepAliveHandle);
 		const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);

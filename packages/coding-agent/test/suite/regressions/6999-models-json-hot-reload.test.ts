@@ -43,6 +43,7 @@ function modelsJson(provider: string, model: string): Record<string, unknown> {
 
 describe("issue #6999 models.json hot reload", () => {
 	let tempDir: string | undefined;
+	let savedEnv: Record<string, string | undefined>;
 
 	beforeAll(() => {
 		initTheme("dark");
@@ -50,9 +51,24 @@ describe("issue #6999 models.json hot reload", () => {
 
 	beforeEach(() => {
 		setKeybindings(new KeybindingsManager());
+		savedEnv = {};
+		for (const key of Object.keys(process.env)) {
+			if (
+				/_API_KEY$|_TOKEN$|_SECRET$|CREDENTIALS|GOOGLE_CLOUD|GCLOUD_PROJECT|AWS_PROFILE|AWS_ACCESS_KEY|AWS_SECRET_ACCESS|AWS_BEARER|AWS_CONTAINER|AWS_WEB_IDENTITY/.test(
+					key,
+				)
+			) {
+				savedEnv[key] = process.env[key];
+				delete process.env[key];
+			}
+		}
 	});
 
 	afterEach(() => {
+		for (const [key, value] of Object.entries(savedEnv)) {
+			if (value !== undefined) process.env[key] = value;
+			else delete process.env[key];
+		}
 		if (tempDir) rmSync(tempDir, { recursive: true, force: true });
 		tempDir = undefined;
 	});

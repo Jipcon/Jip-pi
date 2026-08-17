@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { getDefaultCommandToolName } from "../src/core/tools/index.ts";
 
 describe("createAgentSession session manager defaults", () => {
 	let tempDir: string;
@@ -41,7 +42,7 @@ describe("createAgentSession session manager defaults", () => {
 		const sessionFile = session.sessionManager.getSessionFile();
 
 		expect(sessionDir).toBe(expectedSessionDir);
-		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
+		expect(sessionFile?.startsWith(`${expectedSessionDir}${sep}`)).toBe(true);
 
 		session.dispose();
 	});
@@ -78,11 +79,13 @@ describe("createAgentSession session manager defaults", () => {
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd.replace(/\\/g, "/")}`);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", { command: "pwd" });
+		const commandToolName = getDefaultCommandToolName();
+		const commandTool = session.agent.state.tools.find((tool) => tool.name === commandToolName);
+		expect(commandTool).toBeTruthy();
+		const pwdCommand = commandToolName === "pwsh" ? "Write-Output $PWD.Path" : "pwd";
+		const result = await commandTool!.execute("test", { command: pwdCommand });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
@@ -108,17 +111,20 @@ describe("createAgentSession session manager defaults", () => {
 			"You can inspect PI_* environment variables for current model and session details.",
 		);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
-		expect(bashTool).toBeTruthy();
-		const result = await bashTool!.execute("test", {
-			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
-		});
+		const commandToolName = getDefaultCommandToolName();
+		const commandTool = session.agent.state.tools.find((tool) => tool.name === commandToolName);
+		expect(commandTool).toBeTruthy();
+		const envCommand =
+			commandToolName === "pwsh"
+				? "Write-Output $env:PI_SESSION_ID; Write-Output $env:PI_SESSION_FILE; Write-Output $env:PI_PROVIDER; Write-Output $env:PI_MODEL; Write-Output $env:PI_REASONING_LEVEL"
+				: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`;
+		const result = await commandTool!.execute("test", { command: envCommand });
 		const output = result.content
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
 			.join("");
 
-		expect(output.trim().split("\n")).toEqual([
+		expect(output.trim().split(/\r?\n/)).toEqual([
 			session.sessionId,
 			session.sessionFile,
 			model!.provider,

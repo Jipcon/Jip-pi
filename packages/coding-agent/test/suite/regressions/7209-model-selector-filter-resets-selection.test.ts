@@ -1,5 +1,5 @@
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -21,6 +21,7 @@ function selectedModelId(rendered: string): string | undefined {
 
 describe("model selector filter resets selection to top", () => {
 	const harnesses: Harness[] = [];
+	let savedEnv: Record<string, string | undefined>;
 
 	beforeAll(() => {
 		initTheme("dark");
@@ -28,6 +29,24 @@ describe("model selector filter resets selection to top", () => {
 
 	beforeEach(() => {
 		setKeybindings(new KeybindingsManager());
+		savedEnv = {};
+		for (const key of Object.keys(process.env)) {
+			if (
+				/_API_KEY$|_TOKEN$|_SECRET$|CREDENTIALS|GOOGLE_CLOUD|GCLOUD_PROJECT|AWS_PROFILE|AWS_ACCESS_KEY|AWS_SECRET_ACCESS|AWS_BEARER|AWS_CONTAINER|AWS_WEB_IDENTITY/.test(
+					key,
+				)
+			) {
+				savedEnv[key] = process.env[key];
+				delete process.env[key];
+			}
+		}
+	});
+
+	afterEach(() => {
+		for (const [key, value] of Object.entries(savedEnv)) {
+			if (value !== undefined) process.env[key] = value;
+			else delete process.env[key];
+		}
 	});
 
 	afterAll(() => {

@@ -98,9 +98,9 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain(
-				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+				"Paths such as docs/... and examples/... refer to these roots, not to the current working directory",
 			);
-			expect(prompt).toContain("environment variables (docs/environment-variables.md)");
+			expect(prompt).toContain("Environment variables: docs/environment-variables.md");
 		});
 	});
 

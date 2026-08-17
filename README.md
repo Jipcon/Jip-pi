@@ -440,14 +440,18 @@ Jip-pi currently retains much of Pi's monorepo package structure.
 
 | Package                                                      | Description                                                                                          |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| **[@earendil-works/pi-adaptive-agent](packages/adaptive-agent)** | Jip-pi adaptive runtime interfaces and adapters                                                     |
 | **[@earendil-works/pi-telemetry](packages/telemetry)**       | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas          |
 | **[@earendil-works/pi-ai](packages/ai)**                     | Unified multi-provider LLM API for OpenAI, Anthropic, Google, and other providers                    |
 | **[@earendil-works/pi-agent-core](packages/agent)**          | Core agent runtime with tool calling and state management                                            |
 | **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Pi-derived coding-agent runtime and interactive CLI                                                  |
 | **[@earendil-works/pi-tui](packages/tui)**                   | Terminal UI library with differential rendering                                                      |
+| **[@earendil-works/pi-session-backend-sqlite-node](packages/session-backends/sqlite-node)** | Node SQLite session persistence backend                          |
+| **[@earendil-works/pi-evals](packages/evals)**               | Benchmarking and evaluation harness                                                                  |
 | **[desktop](packages/desktop)**                              | Jip-pi Electron + React desktop application                                                          |
 | **[agent-protocol](packages/agent-protocol)**                | Backend-neutral protocol for commands, state, messages, events, tools, and capabilities              |
 | **[pi-gui-adapter](packages/pi-gui-adapter)**                | Pi-specific subprocess lifecycle, JSONL RPC transport, capability discovery, and event normalization |
+| **[pi-sdk-adapter](packages/pi-sdk-adapter)**                | In-process adapter between the AgentBackend protocol and the coding-agent SDK                        |
 
 Additional packages or internal modules may be introduced as the adaptive
 Controller, Evaluator, Optimizer, candidate-management, and policy
@@ -517,13 +521,13 @@ npm run check
 Run the test suite:
 
 ```bash
-./test.sh
+npm test
 ```
 
 Run the coding agent directly from source:
 
 ```bash
-./pi-test.sh
+npx tsx packages/coding-agent/src/cli.ts
 ```
 
 LLM-dependent tests are skipped when the corresponding provider credentials are
@@ -597,12 +601,9 @@ build system include:
 * `.npmrc` uses a minimum dependency release age to reduce exposure to
   same-day package releases.
 * `package-lock.json` is the dependency ground truth.
-* Pre-commit checks guard against accidental lockfile changes.
 * `npm run check` verifies dependency consistency and generated package state.
-* The published coding-agent package uses a generated shrinkwrap derived from
-  the root lockfile.
-* Release smoke tests can build and install packages in isolated environments
-  before publication.
+* The coding-agent package ships a generated shrinkwrap derived from the root
+  lockfile.
 * Lifecycle scripts are disabled where supported during sensitive installation
   paths.
 * CI installs dependencies using reproducible lockfile-based installation.
