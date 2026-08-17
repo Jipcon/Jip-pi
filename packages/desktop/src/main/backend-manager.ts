@@ -382,6 +382,12 @@ export class BackendManager {
 		return backend.listProviderAuthStatus();
 	}
 
+	/** Full-catalog model metadata by id (the catalog backend answers it). */
+	async listModelsByIds(ids: string[]): Promise<ModelInfo[]> {
+		const backend = this.activeSlot?.backend ?? (await this.ensureCatalogBackend());
+		return backend.listModelsByIds(ids);
+	}
+
 	/**
 	 * Store an api key through the credential API on every pooled backend so
 	 * both warm workspace backends observe the change, then refresh their

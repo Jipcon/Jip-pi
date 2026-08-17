@@ -14,6 +14,7 @@ import type {
 	CustomProviderConfig,
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
+	CustomProviderMatchedModel,
 	SessionStorageConfig,
 	SessionStorageMode,
 } from "../../shared/ipc.ts";
@@ -54,6 +55,7 @@ export function SettingsPanel({
 	onDeleteCustomProvider,
 	onReloadModels,
 	onFetchCustomProviderModels,
+	onMatchCustomProviderModels,
 	onClose,
 }: {
 	logs: string[];
@@ -77,6 +79,7 @@ export function SettingsPanel({
 	onDeleteCustomProvider?: (providerId: string) => Promise<void>;
 	onReloadModels?: () => Promise<void>;
 	onFetchCustomProviderModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
+	onMatchCustomProviderModels?: (ids: string[]) => Promise<CustomProviderMatchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const [activeSection, setActiveSection] = useState<SettingsSection>("general");
@@ -468,6 +471,7 @@ export function SettingsPanel({
 					error={customError}
 					onSave={(config, apiKey) => saveCustomProvider(config, apiKey)}
 					onFetchModels={onFetchCustomProviderModels}
+					onMatchModels={onMatchCustomProviderModels}
 					onClose={() => {
 						setCustomDialog(null);
 						setCustomError(null);

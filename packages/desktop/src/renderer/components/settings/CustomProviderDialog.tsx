@@ -10,11 +10,13 @@
  */
 
 import { useState } from "react";
+import type { ModelThinkingLevel } from "@earendil-works/pi-agent-protocol";
 import type {
 	CustomProviderApi,
 	CustomProviderConfig,
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
+	CustomProviderMatchedModel,
 	CustomProviderModelConfig,
 } from "../../../shared/ipc.ts";
 import { redactCredentialText } from "../../state/redact.ts";
@@ -27,6 +29,8 @@ const API_OPTIONS: { value: CustomProviderApi; label: string }[] = [
 	{ value: "google-generative-ai", label: "Google Generative AI" },
 ];
 
+const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 interface ModelDraft {
 	id: string;
 	name: string;
@@ -35,6 +39,7 @@ interface ModelDraft {
 	image: boolean;
 	contextWindow: string;
 	maxTokens: string;
+	thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
 }
 
 function toDraft(model: CustomProviderModelConfig): ModelDraft {
@@ -46,6 +51,7 @@ function toDraft(model: CustomProviderModelConfig): ModelDraft {
 		image: model.input?.includes("image") ?? false,
 		contextWindow: model.contextWindow !== undefined ? String(model.contextWindow) : "",
 		maxTokens: model.maxTokens !== undefined ? String(model.maxTokens) : "",
+		thinkingLevelMap: model.thinkingLevelMap,
 	};
 }
 
@@ -60,12 +66,18 @@ function parsePositiveInt(value: string): number | undefined {
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+/** Levels with a custom provider value, joined for checklist display. */
+function thinkingSummary(map: Partial<Record<ModelThinkingLevel, string | null>>): string {
+	return THINKING_LEVELS.filter((level) => map[level] !== null && map[level] !== undefined).join("/");
+}
+
 export function CustomProviderDialog({
 	initial,
 	busy,
 	error,
 	onSave,
 	onFetchModels,
+	onMatchModels,
 	onClose,
 }: {
 	initial?: CustomProviderConfig;
@@ -73,6 +85,7 @@ export function CustomProviderDialog({
 	error: string | null;
 	onSave: (config: CustomProviderConfig, apiKey?: string) => Promise<void>;
 	onFetchModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
+	onMatchModels?: (ids: string[]) => Promise<CustomProviderMatchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const editing = initial !== undefined;
@@ -90,6 +103,7 @@ export function CustomProviderDialog({
 	const [fetching, setFetching] = useState(false);
 	const [fetchedModels, setFetchedModels] = useState<CustomProviderFetchedModel[]>([]);
 	const [selectedFetched, setSelectedFetched] = useState<ReadonlySet<string>>(new Set());
+	const [fetchedMeta, setFetchedMeta] = useState<ReadonlyMap<string, CustomProviderMatchedModel>>(new Map());
 	const [fetchError, setFetchError] = useState<string | null>(null);
 
 	const addHeader = (): void => setHeaders((prev) => [...prev, { key: "", value: "" }]);
@@ -127,6 +141,17 @@ export function CustomProviderDialog({
 			}
 			setFetchedModels(models);
 			setSelectedFetched(new Set(models.map((model) => model.id)));
+			setFetchedMeta(new Map());
+			// Local-catalog metadata matching is best-effort: failures never block
+			// the fetched list itself, the user can fill the fields manually.
+			if (onMatchModels) {
+				try {
+					const matches = await onMatchModels(models.map((model) => model.id));
+					setFetchedMeta(new Map(matches.map((match) => [match.id, match])));
+				} catch {
+					// Keep the fetched list usable without metadata.
+				}
+			}
 		} catch (error) {
 			setFetchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
 		} finally {
@@ -147,16 +172,59 @@ export function CustomProviderDialog({
 	const toggleAllFetched = (): void =>
 		setSelectedFetched(allSelected ? new Set() : new Set(fetchedModels.map((model) => model.id)));
 
+	/** Catalog-metadata chips for one fetched checklist row. */
+	const metaChips = (model: CustomProviderFetchedModel): React.JSX.Element | null => {
+		const meta = fetchedMeta.get(model.id);
+		if (!meta) return null;
+		return (
+			<>
+				{meta.reasoning === true && <span className="custom-provider-fetched-meta">thinking</span>}
+				{meta.contextWindow !== undefined && (
+					<span className="custom-provider-fetched-meta">catalog ctx {meta.contextWindow}</span>
+				)}
+				{meta.maxTokens !== undefined && (
+					<span className="custom-provider-fetched-meta">catalog max {meta.maxTokens}</span>
+				)}
+				{meta.thinkingLevelMap && (
+					<span className="custom-provider-fetched-meta">levels {thinkingSummary(meta.thinkingLevelMap)}</span>
+				)}
+			</>
+		);
+	};
+
+	const setThinkingLevel = (index: number, level: ModelThinkingLevel, value: string | null | undefined): void =>
+		setModels((prev) =>
+			prev.map((draft, i) => {
+				if (i !== index) return draft;
+				const map: Partial<Record<ModelThinkingLevel, string | null>> = { ...(draft.thinkingLevelMap ?? {}) };
+				if (value === undefined) delete map[level];
+				else map[level] = value;
+				return { ...draft, thinkingLevelMap: map };
+			}),
+		);
+
 	const addSelectedFetched = (): void => {
 		const existing = new Set(models.map((draft) => draft.id.trim()).filter((modelId) => modelId.length > 0));
 		const additions = fetchedModels
 			.filter((model) => selectedFetched.has(model.id) && !existing.has(model.id))
-			.map(toDraft);
+			.map((model) => {
+				const meta = fetchedMeta.get(model.id);
+				return toDraft({
+					id: model.id,
+					name: model.name ?? meta?.name,
+					reasoning: meta?.reasoning,
+					input: meta?.input,
+					contextWindow: model.contextWindow ?? meta?.contextWindow,
+					maxTokens: model.maxTokens ?? meta?.maxTokens,
+					thinkingLevelMap: meta?.thinkingLevelMap,
+				});
+			});
 		if (additions.length > 0) {
 			setModels((prev) => [...prev, ...additions]);
 		}
 		setFetchedModels([]);
 		setSelectedFetched(new Set());
+		setFetchedMeta(new Map());
 		setFetchError(null);
 	};
 
@@ -190,6 +258,14 @@ export function CustomProviderDialog({
 			if (contextWindow !== undefined) model.contextWindow = contextWindow;
 			const maxTokens = parsePositiveInt(draft.maxTokens);
 			if (maxTokens !== undefined) model.maxTokens = maxTokens;
+			if (draft.thinkingLevelMap) {
+				const cleaned: Partial<Record<ModelThinkingLevel, string | null>> = {};
+				for (const level of THINKING_LEVELS) {
+					const value = draft.thinkingLevelMap[level];
+					if (value === null || (typeof value === "string" && value.length > 0)) cleaned[level] = value;
+				}
+				if (Object.keys(cleaned).length > 0) model.thinkingLevelMap = cleaned;
+			}
 			return model;
 		});
 		const serializedHeaders: Record<string, string> = {};
@@ -430,6 +506,7 @@ export function CustomProviderDialog({
 												{model.maxTokens !== undefined && (
 													<span className="custom-provider-fetched-meta">max out {model.maxTokens}</span>
 												)}
+												{metaChips(model)}
 											</label>
 										))}
 									</div>
@@ -530,6 +607,49 @@ export function CustomProviderDialog({
 											data-testid={`custom-provider-model-max-tokens-${index}`}
 										/>
 									</div>
+									{draft.reasoning && (
+										<div className="custom-provider-thinking" data-testid={`custom-provider-thinking-${index}`}>
+											<span className="custom-provider-thinking-title">Thinking levels</span>
+											<div className="custom-provider-thinking-grid">
+												{THINKING_LEVELS.map((level) => {
+													const current = draft.thinkingLevelMap?.[level];
+													const mode = current === undefined ? "default" : current === null ? "hidden" : "custom";
+													return (
+														<div className="custom-provider-thinking-row" key={level}>
+															<span className="custom-provider-thinking-level">{level}</span>
+															<select
+																className="modal-input"
+																value={mode}
+																disabled={busy}
+																onChange={(event) => {
+																	const next = event.target.value;
+																	setThinkingLevel(index, level, next === "default" ? undefined : next === "hidden" ? null : "");
+																}}
+																data-testid={`custom-provider-thinking-mode-${index}-${level}`}
+															>
+																<option value="default">default</option>
+																<option value="hidden">hide</option>
+																<option value="custom">custom</option>
+															</select>
+															{mode === "custom" && (
+																<input
+																	type="text"
+																	className="modal-input"
+																	placeholder="provider value"
+																	value={current ?? ""}
+																	autoComplete="off"
+																	spellCheck={false}
+																	disabled={busy}
+																	onChange={(event) => setThinkingLevel(index, level, event.target.value)}
+																	data-testid={`custom-provider-thinking-value-${index}-${level}`}
+																/>
+															)}
+														</div>
+													);
+												})}
+											</div>
+										</div>
+									)}
 								</div>
 							))}
 						</div>

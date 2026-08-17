@@ -3201,6 +3201,53 @@ textarea:focus-visible {
 	width: 130px !important;
 }
 
+.custom-provider-thinking {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 6px;
+	padding: 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-normal);
+	background: var(--surface);
+}
+
+.custom-provider-thinking-title {
+	color: var(--text-secondary);
+	font-size: 11px;
+	font-weight: 650;
+}
+
+.custom-provider-thinking-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px 10px;
+}
+
+.custom-provider-thinking-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.custom-provider-thinking-level {
+	flex: 0 0 52px;
+	color: var(--text-faint);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.custom-provider-thinking-row select {
+	flex: 0 0 auto;
+	width: auto;
+}
+
+.custom-provider-thinking-row input {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: auto;
+}
+
 .modal-narrow-scroll {
 	max-height: min(78vh, 720px);
 }

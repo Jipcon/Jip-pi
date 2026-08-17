@@ -15,6 +15,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import type { ModelThinkingLevel } from "@earendil-works/pi-agent-protocol";
 import type { CustomProviderApi, CustomProviderConfig, CustomProviderModelConfig } from "../shared/ipc.ts";
 
 const SUPPORTED_APIS: readonly CustomProviderApi[] = [
@@ -23,6 +24,20 @@ const SUPPORTED_APIS: readonly CustomProviderApi[] = [
 	"anthropic-messages",
 	"google-generative-ai",
 ];
+
+const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Copy only valid thinking-level entries from a raw models.json model. */
+function sanitizeThinkingLevelMap(raw: unknown): Partial<Record<ModelThinkingLevel, string | null>> | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const map: Partial<Record<ModelThinkingLevel, string | null>> = {};
+	for (const level of THINKING_LEVELS) {
+		const entry = (raw as Record<string, unknown>)[level];
+		if (typeof entry === "string") map[level] = entry;
+		else if (entry === null) map[level] = null;
+	}
+	return Object.keys(map).length > 0 ? map : undefined;
+}
 
 interface ModelsJsonFile {
 	providers?: Record<string, Record<string, unknown>>;
@@ -83,6 +98,8 @@ function projectProvider(id: string, raw: Record<string, unknown>): CustomProvid
 		}
 		if (typeof model.contextWindow === "number") projected.contextWindow = model.contextWindow;
 		if (typeof model.maxTokens === "number") projected.maxTokens = model.maxTokens;
+		const thinkingLevelMap = sanitizeThinkingLevelMap(model.thinkingLevelMap);
+		if (thinkingLevelMap !== undefined) projected.thinkingLevelMap = thinkingLevelMap;
 		models.push(projected);
 	}
 	const config: CustomProviderConfig = {
@@ -111,6 +128,7 @@ function serializeModel(model: CustomProviderModelConfig): Record<string, unknow
 	if (model.input !== undefined) out.input = [...model.input];
 	if (model.contextWindow !== undefined) out.contextWindow = model.contextWindow;
 	if (model.maxTokens !== undefined) out.maxTokens = model.maxTokens;
+	if (model.thinkingLevelMap !== undefined) out.thinkingLevelMap = { ...model.thinkingLevelMap };
 	return out;
 }
 

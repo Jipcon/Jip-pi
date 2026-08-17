@@ -15,6 +15,7 @@ import type {
 	AssistantMessageDiagnostic,
 	MessageBlock,
 	ModelInfo,
+	ModelThinkingLevel,
 	AssistantMessage as ProtocolAssistantMessage,
 	UserMessage as ProtocolUserMessage,
 	SessionUsage,
@@ -39,6 +40,21 @@ export interface SdkModelShape {
 	contextWindow?: number;
 	maxTokens?: number;
 	input?: readonly string[];
+	thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
+}
+
+const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Copy only valid thinking-level entries from raw model metadata. */
+function normalizeThinkingLevelMap(raw: unknown): Partial<Record<ModelThinkingLevel, string | null>> | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const map: Partial<Record<ModelThinkingLevel, string | null>> = {};
+	for (const level of THINKING_LEVELS) {
+		const value = (raw as Record<string, unknown>)[level];
+		if (typeof value === "string") map[level] = value;
+		else if (value === null) map[level] = null;
+	}
+	return Object.keys(map).length > 0 ? map : undefined;
 }
 
 export function normalizeSdkModel(model: SdkModelShape | undefined | null): ModelInfo | null {
@@ -53,6 +69,10 @@ export function normalizeSdkModel(model: SdkModelShape | undefined | null): Mode
 	if (typeof model.maxTokens === "number") info.maxTokens = model.maxTokens;
 	if (model.input !== undefined) {
 		info.input = [...model.input];
+	}
+	const thinkingLevelMap = normalizeThinkingLevelMap(model.thinkingLevelMap);
+	if (thinkingLevelMap !== undefined) {
+		info.thinkingLevelMap = thinkingLevelMap;
 	}
 	return info;
 }

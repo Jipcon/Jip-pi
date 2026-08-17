@@ -2227,4 +2227,85 @@ describe("CustomProviderDialog model fetch", () => {
 		render(<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onClose={vi.fn()} />);
 		expect(screen.queryByTestId("custom-provider-fetch")).toBeNull();
 	});
+
+	test("fetch matches local catalog metadata and pre-fills added models", async () => {
+		const onFetchModels = vi.fn(async () => [{ id: "deepseek-v3" }]);
+		const onMatchModels = vi.fn(async () => [
+			{
+				id: "deepseek-v3",
+				contextWindow: 65536,
+				maxTokens: 8192,
+				reasoning: true,
+				thinkingLevelMap: { high: "high", max: "max" },
+			},
+		]);
+		const onSave = vi.fn(async () => {});
+		render(
+			<CustomProviderDialog
+				busy={false}
+				error={null}
+				onSave={onSave}
+				onFetchModels={onFetchModels}
+				onMatchModels={onMatchModels}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x/v1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(onMatchModels).toHaveBeenCalledWith(["deepseek-v3"]));
+		await waitFor(() => expect(screen.getByText(/catalog ctx 65536/)).toBeTruthy());
+		expect(screen.getByText(/levels high\/max/)).toBeTruthy();
+		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
+		// The added row is pre-filled from the catalog metadata.
+		expect((screen.getByTestId("custom-provider-model-id-1") as HTMLInputElement).value).toBe("deepseek-v3");
+		expect((screen.getByTestId("custom-provider-model-context-1") as HTMLInputElement).value).toBe("65536");
+		expect((screen.getByTestId("custom-provider-model-reasoning-1") as HTMLInputElement).checked).toBe(true);
+		// The thinking editor reflects the matched levels.
+		expect(screen.getByTestId("custom-provider-thinking-1")).toBeTruthy();
+		expect((screen.getByTestId("custom-provider-thinking-mode-1-high") as HTMLSelectElement).value).toBe("custom");
+		expect((screen.getByTestId("custom-provider-thinking-value-1-high") as HTMLInputElement).value).toBe("high");
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "p" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+		expect(onSave.mock.calls[0][0].models[0].thinkingLevelMap).toEqual({ high: "high", max: "max" });
+		expect(onSave.mock.calls[0][0].models[0]).toMatchObject({ id: "deepseek-v3", contextWindow: 65536, maxTokens: 8192, reasoning: true });
+	});
+
+	test("match failures keep the fetched list usable without metadata", async () => {
+		const onFetchModels = vi.fn(async () => [{ id: "plain-model" }]);
+		const onMatchModels = vi.fn(async () => {
+			throw new Error("catalog unavailable");
+		});
+		render(
+			<CustomProviderDialog
+				busy={false}
+				error={null}
+				onSave={vi.fn(async () => {})}
+				onFetchModels={onFetchModels}
+				onMatchModels={onMatchModels}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x/v1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(screen.getByTestId("custom-provider-fetched")).toBeTruthy());
+		expect(screen.getByTestId("fetched-model-check-plain-model")).toBeTruthy();
+		expect(screen.queryByText(/catalog ctx/)).toBeNull();
+	});
+
+	test("thinking level editor sets custom and hidden values manually", async () => {
+		const onSave = vi.fn(async () => {});
+		render(<CustomProviderDialog busy={false} error={null} onSave={onSave} onClose={vi.fn()} />);
+		fireEvent.change(screen.getByTestId("custom-provider-model-id-0"), { target: { value: "m1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-model-reasoning-0"));
+		expect(screen.getByTestId("custom-provider-thinking-0")).toBeTruthy();
+		fireEvent.change(screen.getByTestId("custom-provider-thinking-mode-0-medium"), { target: { value: "hidden" } });
+		fireEvent.change(screen.getByTestId("custom-provider-thinking-mode-0-high"), { target: { value: "custom" } });
+		fireEvent.change(screen.getByTestId("custom-provider-thinking-value-0-high"), { target: { value: "high" } });
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "p" } });
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+		expect(onSave.mock.calls[0][0].models[0].thinkingLevelMap).toEqual({ medium: null, high: "high" });
+	});
 });

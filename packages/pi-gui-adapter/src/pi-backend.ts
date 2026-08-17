@@ -362,6 +362,17 @@ export class PiBackend implements AgentBackend {
 		await this.refreshModels();
 	}
 
+	async listModelsByIds(ids: string[]): Promise<ModelInfo[]> {
+		if (ids.length === 0) {
+			return [];
+		}
+		const result = await this.request<{ models?: unknown }>({ type: "match_models_metadata", ids });
+		if (!result.success) {
+			throw new Error(result.error ?? "match_models_metadata failed");
+		}
+		return normalizeModelList(result.data);
+	}
+
 	async setModel(model: ModelRef): Promise<ModelInfo | null> {
 		const result = await this.request({ type: "set_model", provider: model.provider, modelId: model.modelId });
 		if (!result.success) {

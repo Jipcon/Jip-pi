@@ -30,6 +30,7 @@ import {
 	type CustomProviderConfig,
 	type CustomProviderFetchedModel,
 	type CustomProviderFetchRequest,
+	type CustomProviderMatchedModel,
 	IPC,
 	type RoutedAgentEvent,
 	type SessionSnapshot,
@@ -99,6 +100,8 @@ const api = {
 		invokeCommand<void>(IPC.customProvidersDelete, providerId),
 	fetchCustomProviderModels: (request: CustomProviderFetchRequest): Promise<CustomProviderFetchedModel[]> =>
 		invokeCommand<CustomProviderFetchedModel[]>(IPC.customProvidersFetchModels, request),
+	matchCustomProviderModels: (ids: string[]): Promise<CustomProviderMatchedModel[]> =>
+		invokeCommand<CustomProviderMatchedModel[]>(IPC.customProvidersMatchModels, ids),
 	setModel: (workspaceId: string, sessionId: string, model: ModelRef): Promise<ModelInfo | null> =>
 		invokeCommand<ModelInfo | null>(IPC.agentSetModel, workspaceId, sessionId, model),
 	listThinkingLevels: (workspaceId: string, sessionId: string): Promise<string[]> =>

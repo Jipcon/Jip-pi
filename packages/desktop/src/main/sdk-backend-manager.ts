@@ -676,6 +676,10 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		return this.options.hostServices.reloadModels();
 	}
 
+	listModelsByIds(ids: string[]): Promise<ModelInfo[]> {
+		return this.options.hostServices.listModelsByIds(ids);
+	}
+
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {
 		return this.options.hostServices.listProviderAuthStatus();
 	}

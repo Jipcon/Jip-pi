@@ -251,4 +251,51 @@ describe("custom providers store", () => {
 		expect(() => listCustomProviders(path)).toThrow(/could not be parsed/);
 		expect(() => saveCustomProvider(path, fullConfig)).toThrow(/could not be parsed/);
 	});
+
+	test("thinkingLevelMap round-trips through save and list", () => {
+		const path = modelsPath();
+		saveCustomProvider(path, {
+			id: "thinking",
+			baseUrl: "http://x",
+			api: "openai-completions",
+			models: [
+				{
+					id: "m1",
+					reasoning: true,
+					thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+				},
+			],
+		});
+		const [provider] = listCustomProviders(path);
+		expect(provider.models[0].thinkingLevelMap).toEqual({
+			minimal: null,
+			low: null,
+			medium: null,
+			high: "high",
+			max: "max",
+		});
+	});
+
+	test("invalid thinkingLevelMap entries are dropped on projection", () => {
+		const path = modelsPath();
+		writeFileSync(
+			path,
+			JSON.stringify({
+				providers: {
+					thinking: {
+						baseUrl: "http://x",
+						api: "openai-completions",
+						models: [
+							{
+								id: "m1",
+								thinkingLevelMap: { high: "high", bogus: "x", max: 3 },
+							},
+						],
+					},
+				},
+			}),
+		);
+		const [provider] = listCustomProviders(path);
+		expect(provider.models[0].thinkingLevelMap).toEqual({ high: "high" });
+	});
 });

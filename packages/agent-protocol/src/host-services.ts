@@ -22,6 +22,12 @@ export interface AgentHostServices {
 	listModels(): Promise<ModelInfo[]>;
 	/** Reload the model catalog from disk (e.g. after models.json changes). */
 	reloadModels(): Promise<void>;
+	/**
+	 * Full-catalog model metadata by id, independent of credential state.
+	 * Used by the GUI to pre-fill fetched custom models from built-in
+	 * catalog metadata (context window, reasoning, thinking level maps).
+	 */
+	listModelsByIds(ids: string[]): Promise<ModelInfo[]>;
 
 	/** Read-only auth status for every known provider (never key values). */
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]>;

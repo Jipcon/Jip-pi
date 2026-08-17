@@ -127,6 +127,21 @@ export class SdkHostServices implements AgentHostServices {
 		await runtime.refresh({ allowNetwork: false });
 	}
 
+	async listModelsByIds(ids: string[]): Promise<ModelInfo[]> {
+		if (ids.length === 0) {
+			return [];
+		}
+		const runtime = await this.ensureRuntime();
+		const wanted = new Set(ids);
+		// getModels() is the full catalog (built-in + custom), unfiltered by
+		// credential state — exactly what metadata pre-fill needs.
+		return runtime
+			.getModels()
+			.filter((model) => wanted.has(model.id))
+			.map((model) => normalizeSdkModel(model))
+			.filter((model): model is ModelInfo => model !== null);
+	}
+
 	async listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {
 		const runtime = await this.ensureRuntime();
 		return runtime.getProviders().map((provider) => {

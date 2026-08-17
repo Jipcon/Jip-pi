@@ -214,4 +214,18 @@ describe("SdkHostServices", () => {
 		expect(refreshSpy).toHaveBeenCalled();
 		refreshSpy.mockRestore();
 	});
+
+	test("listModelsByIds returns full-catalog metadata for known ids", async () => {
+		const { runtime } = await createTestRuntime();
+		new ModelRegistry(runtime).registerProvider(fauxProvider({ provider: "host-faux" }).provider);
+		await runtime.refresh({ allowNetwork: false });
+		const services = new SdkHostServices({ agentDir: "C:\\agent", modelRuntime: runtime });
+
+		const models = await services.listModelsByIds(["faux-1", "no-such-model"]);
+		expect(models).toHaveLength(1);
+		expect(models[0].id).toBe("faux-1");
+		expect(models[0].provider).toBe("host-faux");
+
+		expect(await services.listModelsByIds([])).toEqual([]);
+	});
 });

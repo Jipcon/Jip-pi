@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contains keys. Adds the `customProviders:fetchModels` IPC channel and
   `fetchCustomProviderModels` bridge method.
 
+- Custom provider metadata pre-fill: after fetching a provider's model list,
+  the GUI matches each fetched id against the full built-in catalog
+  (credential-independent, via a new `listModelsByIds` host service and a
+  `match_models_metadata` RPC command for the legacy path) and shows the
+  catalog context window / max tokens / reasoning / thinking-level summary
+  in the checklist. "Add selected" pre-fills the matched values into the
+  model rows; conflicting catalog hits are left blank for manual entry.
+  Model rows gain a seven-level thinking editor (default / hide / custom
+  provider value) so `thinkingLevelMap` can be set manually when there is no
+  match, and the store now round-trips `thinkingLevelMap` through models.json.
+  Adds the `customProviders:matchModels` IPC channel and the
+  `matchCustomProviderModels` bridge method.
+
 - Custom listbox (`Select.tsx`) replaces the native `<select>` popups in the
   top bar (OS-rendered popups cannot be styled): surface-overlay panel with
   strong border and shadow, accent indicator bar + check on the selected

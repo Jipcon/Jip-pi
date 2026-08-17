@@ -544,6 +544,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "reload_models");
 			}
 
+			case "match_models_metadata": {
+				const wanted = new Set(command.ids);
+				const models = session.modelRuntime.getModels().filter((model) => wanted.has(model.id));
+				return success(id, "match_models_metadata", { models });
+			}
+
 			// =================================================================
 			// Thinking
 			// =================================================================

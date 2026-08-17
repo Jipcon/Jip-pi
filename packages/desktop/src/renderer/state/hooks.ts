@@ -15,6 +15,7 @@ import type {
 	CustomProviderConfig,
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
+	CustomProviderMatchedModel,
 	SessionStorageConfig,
 } from "../../shared/ipc.ts";
 import { workspacePathsEqual } from "../../shared/workspace-path.ts";
@@ -588,6 +589,11 @@ export async function fetchCustomProviderModels(
 	request: CustomProviderFetchRequest,
 ): Promise<CustomProviderFetchedModel[]> {
 	return window.agent.fetchCustomProviderModels(request);
+}
+
+/** Match fetched model ids against the local catalog for pre-fill metadata. */
+export async function matchCustomProviderModels(ids: string[]): Promise<CustomProviderMatchedModel[]> {
+	return window.agent.matchCustomProviderModels(ids);
 }
 
 /**

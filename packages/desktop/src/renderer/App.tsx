@@ -35,6 +35,7 @@ import {
 	fetchCustomProviderModels,
 	listCustomProviders,
 	loginProviderOAuth,
+	matchCustomProviderModels,
 	pickWorkspaceAndStart,
 	removeProviderCredential,
 	reloadModelCatalog,
@@ -328,6 +329,7 @@ export function App(): React.JSX.Element {
 					onDeleteCustomProvider={deleteCustomProvider}
 					onReloadModels={reloadModelCatalog}
 					onFetchCustomProviderModels={fetchCustomProviderModels}
+					onMatchCustomProviderModels={matchCustomProviderModels}
 					onClose={closeSettings}
 				/>
 			)}

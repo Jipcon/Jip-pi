@@ -31,6 +31,7 @@ import { createAgentEventForwarder } from "./agent-event-forwarder.ts";
 import { AgentHost, agentDirPath } from "./agent-host.ts";
 import type { DesktopAgentRuntime } from "./agent-runtime.ts";
 import { fetchProviderModels } from "./custom-provider-fetch.ts";
+import { mergeMatchedModels } from "./custom-provider-match.ts";
 import { deleteCustomProvider, listCustomProviders, saveCustomProvider } from "./custom-providers-store.ts";
 import {
 	type DesktopSettings,
@@ -454,6 +455,13 @@ function registerIpc(): void {
 
 	ipcMain.handle(IPC.customProvidersFetchModels, (_event, request: CustomProviderFetchRequest) =>
 		toCommandResult(() => fetchProviderModels(request)),
+	);
+
+	ipcMain.handle(IPC.customProvidersMatchModels, (_event, ids: string[]) =>
+		toCommandResult(async () => {
+			const hits = await runtime.listModelsByIds(ids);
+			return mergeMatchedModels(hits, ids);
+		}),
 	);
 
 	ipcMain.handle(

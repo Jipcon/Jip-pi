@@ -221,6 +221,10 @@ export class LegacyBackendManager implements DesktopAgentRuntime {
 		return this.delegate.reloadModels();
 	}
 
+	listModelsByIds(ids: string[]): Promise<ModelInfo[]> {
+		return this.delegate.listModelsByIds(ids);
+	}
+
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {
 		return this.delegate.listProviderAuthStatus();
 	}

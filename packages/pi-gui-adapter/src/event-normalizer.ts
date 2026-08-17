@@ -14,6 +14,7 @@ import type {
 	AssistantMessageDiagnostic,
 	MessageBlock,
 	ModelInfo,
+	ModelThinkingLevel,
 	SessionUsage,
 	ToolCallInfo,
 	ToolResultMessage,
@@ -47,7 +48,25 @@ export function normalizeModel(raw: unknown): ModelInfo | null {
 	if (Array.isArray(value.input)) {
 		model.input = value.input.filter((entry): entry is string => typeof entry === "string");
 	}
+	const thinkingLevelMap = normalizeThinkingLevelMap(value.thinkingLevelMap);
+	if (thinkingLevelMap !== undefined) {
+		model.thinkingLevelMap = thinkingLevelMap;
+	}
 	return model;
+}
+
+const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Copy only valid thinking-level entries from raw model metadata. */
+function normalizeThinkingLevelMap(raw: unknown): Partial<Record<ModelThinkingLevel, string | null>> | undefined {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const map: Partial<Record<ModelThinkingLevel, string | null>> = {};
+	for (const level of THINKING_LEVELS) {
+		const entry = (raw as Record<string, unknown>)[level];
+		if (typeof entry === "string") map[level] = entry;
+		else if (entry === null) map[level] = null;
+	}
+	return Object.keys(map).length > 0 ? map : undefined;
 }
 
 // ---------------------------------------------------------------------------

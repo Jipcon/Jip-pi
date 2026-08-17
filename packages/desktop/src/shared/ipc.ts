@@ -15,6 +15,7 @@ import type {
 	AgentMessage,
 	AgentState,
 	BackendHandshake,
+	ModelThinkingLevel,
 	SessionUsage,
 } from "@earendil-works/pi-agent-protocol";
 
@@ -45,6 +46,7 @@ export const IPC = {
 	customProvidersSave: "customProviders:save",
 	customProvidersDelete: "customProviders:delete",
 	customProvidersFetchModels: "customProviders:fetchModels",
+	customProvidersMatchModels: "customProviders:matchModels",
 	agentListThinkingLevels: "agent:listThinkingLevels",
 	agentSetThinkingLevel: "agent:setThinkingLevel",
 	authListStatus: "auth:listStatus",
@@ -108,6 +110,8 @@ export interface CustomProviderModelConfig {
 	contextWindow?: number;
 	/** Maximum output tokens. */
 	maxTokens?: number;
+	/** Maps pi thinking levels to provider-specific values; null hides a level. */
+	thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
 }
 
 export interface CustomProviderConfig {
@@ -147,6 +151,22 @@ export interface CustomProviderFetchedModel {
 	contextWindow?: number;
 	/** Maximum output tokens, when the endpoint provides one. */
 	maxTokens?: number;
+}
+
+/**
+ * Local-catalog metadata merged for one fetched model id. Fields are filled
+ * only when every catalog hit with that id agrees; conflicting fields are
+ * omitted so the user decides manually.
+ */
+export interface CustomProviderMatchedModel {
+	id: string;
+	/** Display name, when all catalog hits agree. */
+	name?: string;
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	input?: ("text" | "image")[];
+	thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
 }
 
 export interface CommandResult<T = undefined> {

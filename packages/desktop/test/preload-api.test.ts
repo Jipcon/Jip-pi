@@ -77,6 +77,7 @@ describe("preload API surface", () => {
 			"saveCustomProvider",
 			"deleteCustomProvider",
 			"fetchCustomProviderModels",
+			"matchCustomProviderModels",
 			"setModel",
 			"listThinkingLevels",
 			"setThinkingLevel",
@@ -188,6 +189,8 @@ describe("preload API surface", () => {
 		const fetchRequest = { baseUrl: "http://x", api: "openai-completions", apiKey: "sk-test" };
 		await (api.fetchCustomProviderModels as (request: unknown) => Promise<unknown>)(fetchRequest);
 		expect(invoked.at(-1)).toEqual({ channel: "customProviders:fetchModels", args: [fetchRequest] });
+		await (api.matchCustomProviderModels as (ids: string[]) => Promise<unknown>)(["a", "b"]);
+		expect(invoked.at(-1)).toEqual({ channel: "customProviders:matchModels", args: [["a", "b"]] });
 	});
 
 	test("subscribe forwards agent events and unsubscribes cleanly", () => {

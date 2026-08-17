@@ -73,6 +73,8 @@ export interface DesktopAgentRuntime {
 	listModels(): Promise<ModelInfo[]>;
 	/** Reload the model catalog from disk (e.g. after models.json changes). */
 	reloadModels(): Promise<void>;
+	/** Full-catalog model metadata by id, independent of credential state. */
+	listModelsByIds(ids: string[]): Promise<ModelInfo[]>;
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]>;
 	setApiKey(provider: string, apiKey: string): Promise<void>;
 	removeCredential(provider: string): Promise<void>;
