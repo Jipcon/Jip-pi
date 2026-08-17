@@ -306,7 +306,12 @@ describe("GitWorktreeWorkspaceManager", () => {
 		await lease.release();
 		const remaining = await readdir(join(commonDir, "worktrees")).catch(() => []);
 		expect(remaining).not.toContain(metadataName);
-		expect((await git(root, ["worktree", "list", "--porcelain"])).stdout).not.toContain("c1");
+		// Only the `worktree <path>` lines name registered worktrees; the HEAD
+		// line carries the foreground commit hash, which can incidentally
+		// contain "c1" and would false-positive this check.
+		const porcelain = (await git(root, ["worktree", "list", "--porcelain"])).stdout;
+		const worktreePaths = porcelain.split("\n").filter((line) => line.startsWith("worktree "));
+		expect(worktreePaths.some((line) => line.includes("c1"))).toBe(false);
 	});
 
 	it("in-root junctions are captured as links and materialized as links", async () => {
