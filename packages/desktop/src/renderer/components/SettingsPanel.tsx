@@ -11,11 +11,14 @@ import { useEffect, useState } from "react";
 import type { ProviderAuthStatus } from "@earendil-works/pi-agent-protocol";
 import type { DiagnosticEntry } from "../state/store.ts";
 import type {
+	CustomProviderConfig,
 	SessionStorageConfig,
 	SessionStorageMode,
 } from "../../shared/ipc.ts";
 import { Icon, type IconName } from "./Icon.tsx";
 import { ApiKeyDialog } from "./settings/ApiKeyDialog.tsx";
+import { CustomProviderDialog } from "./settings/CustomProviderDialog.tsx";
+import { CustomProvidersSection } from "./settings/CustomProvidersSection.tsx";
 import { ProvidersSection } from "./settings/ProvidersSection.tsx";
 import { redactCredentialText } from "../state/redact.ts";
 
@@ -44,6 +47,10 @@ export function SettingsPanel({
 	onSaveApiKey,
 	onRemoveCredential,
 	onStartOAuthLogin,
+	onListCustomProviders,
+	onSaveCustomProvider,
+	onDeleteCustomProvider,
+	onReloadModels,
 	onClose,
 }: {
 	logs: string[];
@@ -62,6 +69,10 @@ export function SettingsPanel({
 	onSaveApiKey?: (provider: string, apiKey: string) => Promise<void>;
 	onRemoveCredential?: (provider: string) => Promise<void>;
 	onStartOAuthLogin?: (provider: string) => void;
+	onListCustomProviders?: () => Promise<CustomProviderConfig[]>;
+	onSaveCustomProvider?: (config: CustomProviderConfig) => Promise<void>;
+	onDeleteCustomProvider?: (providerId: string) => Promise<void>;
+	onReloadModels?: () => Promise<void>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const [activeSection, setActiveSection] = useState<SettingsSection>("general");
@@ -75,6 +86,37 @@ export function SettingsPanel({
 	const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
 	const [authBusyProvider, setAuthBusyProvider] = useState<string | null>(null);
 	const [authError, setAuthError] = useState<string | null>(null);
+
+	// Custom providers (models.json). Only the GUI owns this list; the
+	// backend-driven auth status list lives separately below it.
+	const customProvidersEnabled =
+		onListCustomProviders !== undefined &&
+		onSaveCustomProvider !== undefined &&
+		onDeleteCustomProvider !== undefined &&
+		onReloadModels !== undefined;
+	const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
+	const [customBusy, setCustomBusy] = useState(false);
+	const [customError, setCustomError] = useState<string | null>(null);
+	const [customDialog, setCustomDialog] = useState<
+		{ mode: "add" } | { mode: "edit"; config: CustomProviderConfig } | null
+	>(null);
+
+	const refreshCustomProviders = async (): Promise<void> => {
+		if (!onListCustomProviders) return;
+		try {
+			const providers = await onListCustomProviders();
+			setCustomProviders(providers);
+		} catch (error) {
+			setCustomError(error instanceof Error ? error.message : String(error));
+		}
+	};
+
+	useEffect(() => {
+		if (customProvidersEnabled && activeSection === "providers") {
+			void refreshCustomProviders();
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [customProvidersEnabled, activeSection]);
 
 	useEffect(() => {
 		setStorageMode(sessionStorage.mode);
@@ -158,6 +200,49 @@ export function SettingsPanel({
 		setSelectedProvider(null);
 		setAuthError(null);
 		setAuthBusyProvider(null);
+	};
+
+	const saveCustomProvider = async (config: CustomProviderConfig): Promise<void> => {
+		if (!onSaveCustomProvider) return;
+		setCustomBusy(true);
+		setCustomError(null);
+		try {
+			await onSaveCustomProvider(config);
+			setCustomDialog(null);
+			await refreshCustomProviders();
+		} catch (error) {
+			setCustomError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setCustomBusy(false);
+		}
+	};
+
+	const deleteCustomProvider = async (providerId: string): Promise<void> => {
+		if (!onDeleteCustomProvider) return;
+		setCustomBusy(true);
+		setCustomError(null);
+		try {
+			await onDeleteCustomProvider(providerId);
+			await refreshCustomProviders();
+		} catch (error) {
+			setCustomError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setCustomBusy(false);
+		}
+	};
+
+	const reloadModels = async (): Promise<void> => {
+		if (!onReloadModels) return;
+		setCustomBusy(true);
+		setCustomError(null);
+		try {
+			await onReloadModels();
+			await refreshCustomProviders();
+		} catch (error) {
+			setCustomError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setCustomBusy(false);
+		}
 	};
 
 	return (
@@ -296,6 +381,20 @@ export function SettingsPanel({
 						{activeSection === "providers" && (
 							<>
 								<h4 className="inspector-subheading">Providers</h4>
+								{customProvidersEnabled && (
+									<CustomProvidersSection
+										providers={customProviders}
+										busy={customBusy}
+										onAdd={() => setCustomDialog({ mode: "add" })}
+										onEdit={(providerId) => {
+											const config = customProviders.find((entry) => entry.id === providerId);
+											if (config) setCustomDialog({ mode: "edit", config });
+										}}
+										onDelete={(providerId) => void deleteCustomProvider(providerId)}
+										onReload={() => void reloadModels()}
+									/>
+								)}
+								{customError && <p className="settings-error">{customError}</p>}
 								<ProvidersSection statuses={authStatuses} onSelect={setSelectedProvider} />
 							</>
 						)}
@@ -348,6 +447,18 @@ export function SettingsPanel({
 							: undefined
 					}
 					onClose={closeDialog}
+				/>
+			)}
+			{customDialog && (
+				<CustomProviderDialog
+					initial={customDialog.mode === "edit" ? customDialog.config : undefined}
+					busy={customBusy}
+					error={customError}
+					onSave={(config) => saveCustomProvider(config)}
+					onClose={() => {
+						setCustomDialog(null);
+						setCustomError(null);
+					}}
 				/>
 			)}
 		</div>

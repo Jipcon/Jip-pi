@@ -72,6 +72,10 @@ describe("preload API surface", () => {
 			"getMessages",
 			"getSessionUsage",
 			"listModels",
+			"reloadModels",
+			"listCustomProviders",
+			"saveCustomProvider",
+			"deleteCustomProvider",
 			"setModel",
 			"listThinkingLevels",
 			"setThinkingLevel",
@@ -171,6 +175,15 @@ describe("preload API surface", () => {
 		expect(invoked.at(-1)).toEqual({ channel: "auth:setApiKey", args: ["opencode-go", "sk-test"] });
 		await (api.removeCredential as (provider: string) => Promise<unknown>)("opencode-go");
 		expect(invoked.at(-1)).toEqual({ channel: "auth:removeCredential", args: ["opencode-go"] });
+		await (api.reloadModels as () => Promise<unknown>)();
+		expect(invoked.at(-1)).toEqual({ channel: "models:reload", args: [] });
+		await (api.listCustomProviders as () => Promise<unknown>)();
+		expect(invoked.at(-1)).toEqual({ channel: "customProviders:list", args: [] });
+		const customConfig = { id: "my-local", baseUrl: "http://x", api: "openai-completions", models: [{ id: "m" }] };
+		await (api.saveCustomProvider as (config: unknown) => Promise<unknown>)(customConfig);
+		expect(invoked.at(-1)).toEqual({ channel: "customProviders:save", args: [customConfig] });
+		await (api.deleteCustomProvider as (providerId: string) => Promise<unknown>)("my-local");
+		expect(invoked.at(-1)).toEqual({ channel: "customProviders:delete", args: ["my-local"] });
 	});
 
 	test("subscribe forwards agent events and unsubscribes cleanly", () => {

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Custom provider management: Settings → Providers now has a "Custom
+  providers" section to add, edit, and delete custom model providers
+  persisted to `~/.pi/agent/models.json` (baseUrl, API type, headers, model
+  list). Saving reloads the backend catalog so new providers are selectable
+  without an app restart; a "Reload models" button re-reads models.json after
+  external edits. API keys are still stored through the existing API-key
+  dialog (auth.json), so secrets never land in models.json via the GUI.
+  Exposes `reloadModels`, `listCustomProviders`, `saveCustomProvider`, and
+  `deleteCustomProvider` on the `window.agent` bridge and adds the
+  `models:reload` / `customProviders:list|save|delete` IPC channels.
+
 - Custom listbox (`Select.tsx`) replaces the native `<select>` popups in the
   top bar (OS-rendered popups cannot be styled): surface-overlay panel with
   strong border and shadow, accent indicator bar + check on the selected
@@ -98,6 +109,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sidebar visual tuning: rows sit on the darker canvas background, unselected
   titles drop to muted text (selected keeps full contrast), hover lifts one
   surface step, and project groups breathe wider while rows pack tighter.
+- "Remove workspace" (sidebar workspace context menu) now moves the workspace
+  directory itself to the system Trash, together with every session file that
+  belongs to the workspace (including sessions stored outside the directory,
+  e.g. under the default session root), before dropping the workspace from the
+  recent list. Previously it only hid the workspace while leaving everything on
+  disk. The currently active workspace may be removed as well; the runtime
+  resets to no-workspace afterward so the UI returns to the home screen. A
+  confirmation dialog shows the session count and warns the action cannot be
+  undone.
 
 ### Removed
 
@@ -108,6 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The manual "Collapse" footer bar at the bottom of the expanded sidebar.
   The collapsed rail keeps its expand button (recovery path), and the
   below-900px auto-collapse is unaffected.
+
+### Fixed
+
+- Assistant markdown code blocks tagged `powershell` (or `ps1`) now get
+  syntax highlighting. `rehype-highlight` ships only highlight.js's 37 common
+  languages and PowerShell is not among them; the renderer now registers the
+  PowerShell grammar from `lowlight`'s `all` set alongside `common` (same
+  highlight.js version lowlight uses internally, so no cross-version
+  `LanguageFn`). `lowlight` is now a direct desktop dependency.
 
 ### Fixed
 

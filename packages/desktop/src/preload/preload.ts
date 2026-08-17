@@ -27,6 +27,7 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 import {
 	type BackendStatus,
 	type CommandResult,
+	type CustomProviderConfig,
 	IPC,
 	type RoutedAgentEvent,
 	type SessionSnapshot,
@@ -87,6 +88,13 @@ const api = {
 	getSessionUsage: (workspaceId: string, sessionId: string): Promise<SessionUsage | null> =>
 		invokeCommand<SessionUsage | null>(IPC.agentGetSessionUsage, workspaceId, sessionId),
 	listModels: (): Promise<ModelInfo[]> => invokeCommand<ModelInfo[]>(IPC.agentListModels),
+	reloadModels: (): Promise<void> => invokeCommand<void>(IPC.modelsReload),
+	listCustomProviders: (): Promise<CustomProviderConfig[]> =>
+		invokeCommand<CustomProviderConfig[]>(IPC.customProvidersList),
+	saveCustomProvider: (config: CustomProviderConfig): Promise<void> =>
+		invokeCommand<void>(IPC.customProvidersSave, config),
+	deleteCustomProvider: (providerId: string): Promise<void> =>
+		invokeCommand<void>(IPC.customProvidersDelete, providerId),
 	setModel: (workspaceId: string, sessionId: string, model: ModelRef): Promise<ModelInfo | null> =>
 		invokeCommand<ModelInfo | null>(IPC.agentSetModel, workspaceId, sessionId, model),
 	listThinkingLevels: (workspaceId: string, sessionId: string): Promise<string[]> =>

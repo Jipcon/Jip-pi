@@ -296,6 +296,13 @@ export class BackendManager {
 		await slot.backend.stop().catch(() => {});
 	}
 
+	/** Reset status to no-workspace after the active workspace was removed (backends already discarded). */
+	deactivateWorkspace(workspace: string): void {
+		if (this.status.workspace && workspacePathKey(this.status.workspace) === workspacePathKey(workspace)) {
+			this.setStatus({ phase: "no-workspace", workspace: null });
+		}
+	}
+
 	async sendMessage(message: UserMessage): Promise<void> {
 		await this.requireActive().sendMessage(message);
 	}
@@ -401,6 +408,27 @@ export class BackendManager {
 	}
 
 	/** Remove the stored credential on every pooled backend. */
+	/**
+		 Reload the model catalog from disk on every pooled backend. Legacy
+		 RPC backends cache models.json at spawn; the `reload_models` RPC
+		 command re-reads the file in-process so warm workspace backends pick
+		 up new custom providers without a restart, matching the SDK path.
+		 */
+	async reloadModels(): Promise<void> {
+		const errors: string[] = [];
+		for (const slot of this.slots.values()) {
+			if (!slot.backend.isRunning) continue;
+			try {
+				await slot.backend.reloadModels();
+			} catch (error) {
+				errors.push(error instanceof Error ? error.message : String(error));
+			}
+		}
+		if (errors.length > 0) {
+			throw new Error(errors.join("; "));
+		}
+	}
+
 	async removeCredential(provider: string): Promise<void> {
 		if (!this.activeSlot) {
 			await this.ensureCatalogBackend();

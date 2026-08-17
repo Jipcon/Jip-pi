@@ -297,6 +297,92 @@ function DeleteSessionDialog({
 	);
 }
 
+function RemoveWorkspaceDialog({
+	workspacePath,
+	sessionCount,
+	onClose,
+}: {
+	workspacePath: string;
+	sessionCount: number;
+	onClose: () => void;
+}): React.JSX.Element {
+	const [deleting, setDeleting] = useState(false);
+
+	const confirmRemove = async (): Promise<void> => {
+		setDeleting(true);
+		try {
+			await removeWorkspaceEntry(workspacePath);
+			onClose();
+		} catch (error) {
+			store.dispatch({
+				type: "notify",
+				notification: {
+					message: `Failed to remove "${workspaceName(workspacePath)}": ${error instanceof Error ? error.message : String(error)}`,
+					type: "error",
+				},
+			});
+		} finally {
+			setDeleting(false);
+		}
+	};
+
+	return (
+		<div className="modal-backdrop">
+			<div
+				className="modal session-delete-modal"
+				onKeyDown={(event) => {
+					if (event.key === "Escape" && !deleting) {
+						onClose();
+					}
+				}}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="remove-workspace-title"
+				data-testid="remove-workspace-dialog"
+			>
+				<div className="modal-header">
+					<div>
+						<span className="modal-eyebrow">Workspace</span>
+						<h3 className="modal-title" id="remove-workspace-title">
+							Remove workspace?
+						</h3>
+					</div>
+					<button
+						type="button"
+						className="icon-button"
+						disabled={deleting}
+						onClick={onClose}
+						aria-label="Close remove workspace dialog"
+					>
+						<Icon name="close" />
+					</button>
+				</div>
+				<div className="modal-body">
+					<p className="session-delete-warning" title={workspacePath}>
+						{sessionCount > 0
+							? `Remove "${workspaceName(workspacePath)}" and move the folder and its ${sessionCount} session${sessionCount === 1 ? "" : "s"} to the system Trash? This cannot be undone.`
+							: `Remove "${workspaceName(workspacePath)}" and move the folder to the system Trash? This cannot be undone.`}
+					</p>
+				</div>
+				<div className="modal-actions">
+					<button type="button" className="btn" disabled={deleting} onClick={onClose}>
+						Cancel
+					</button>
+					<button
+						type="button"
+						className="btn btn-danger"
+						disabled={deleting}
+						onClick={() => void confirmRemove()}
+						data-testid="remove-workspace-confirm"
+					>
+						{deleting ? "Removing…" : "Move to Trash"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export function Sidebar({
 	workspace,
 	workspaces,
@@ -333,6 +419,7 @@ export function Sidebar({
 	const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState | null>(null);
 	const [renameTarget, setRenameTarget] = useState<SessionInfo | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
+	const [removeWorkspaceTarget, setRemoveWorkspaceTarget] = useState<string | null>(null);
 	const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
 
 	const handleNewSession = (): void => {
@@ -545,34 +632,13 @@ export function Sidebar({
 							type="button"
 							className="session-context-menu-danger"
 							role="menuitem"
-							disabled={
-								busy ||
-								(backendRunning &&
-									workspace !== null &&
-									workspacePathsEqual(workspaceContextMenu.workspacePath, workspace))
-							}
+							disabled={busy}
 							autoFocus
 							onClick={() => {
 								const target = workspaceContextMenu.workspacePath;
 								setWorkspaceContextMenu(null);
-								void removeWorkspaceEntry(target).catch((error) => {
-									const message = error instanceof Error ? error.message : String(error);
-									store.dispatch({
-										type: "notify",
-										notification: {
-											message: `Failed to remove "${workspaceName(target)}": ${message}`,
-											type: "error",
-										},
-									});
-								});
+								setRemoveWorkspaceTarget(target);
 							}}
-							title={
-								backendRunning &&
-								workspace !== null &&
-								workspacePathsEqual(workspaceContextMenu.workspacePath, workspace)
-									? "Switch to another workspace first"
-									: undefined
-							}
 						>
 							<Icon name="trash" size={14} />
 							Remove workspace
@@ -645,6 +711,19 @@ export function Sidebar({
 			)}
 			{renameTarget && <RenameSessionDialog session={renameTarget} onClose={() => setRenameTarget(null)} />}
 			{deleteTarget && <DeleteSessionDialog session={deleteTarget} onClose={() => setDeleteTarget(null)} />}
+			{removeWorkspaceTarget && (
+				<RemoveWorkspaceDialog
+					workspacePath={removeWorkspaceTarget}
+					sessionCount={
+						catalogSessions.filter(
+							(session) =>
+								session.workspacePath &&
+								workspacePathsEqual(session.workspacePath, removeWorkspaceTarget),
+						).length
+					}
+					onClose={() => setRemoveWorkspaceTarget(null)}
+				/>
+			)}
 		</aside>
 	);
 }

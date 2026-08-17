@@ -351,6 +351,17 @@ export class PiBackend implements AgentBackend {
 		return this.refreshModels();
 	}
 
+	async reloadModels(): Promise<void> {
+		// Tell the backend subprocess to re-read models.json and recompose its
+		// providers, then refill this adapter's model cache from the result.
+		const result = await this.request({ type: "reload_models" });
+		if (!result.success) {
+			throw new Error(result.error ?? "reload_models failed");
+		}
+		this.cachedModels = [];
+		await this.refreshModels();
+	}
+
 	async setModel(model: ModelRef): Promise<ModelInfo | null> {
 		const result = await this.request({ type: "set_model", provider: model.provider, modelId: model.modelId });
 		if (!result.success) {

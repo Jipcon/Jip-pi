@@ -119,6 +119,14 @@ export class SdkHostServices implements AgentHostServices {
 		return models.map((model) => normalizeSdkModel(model)).filter((model): model is ModelInfo => model !== null);
 	}
 
+	async reloadModels(): Promise<void> {
+		const runtime = await this.ensureRuntime();
+		// Re-read models.json and recompose providers without a network refresh:
+		// the GUI writes the file and calls this to pick up new custom providers
+		// without an app restart.
+		await runtime.refresh({ allowNetwork: false });
+	}
+
 	async listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {
 		const runtime = await this.ensureRuntime();
 		return runtime.getProviders().map((provider) => {

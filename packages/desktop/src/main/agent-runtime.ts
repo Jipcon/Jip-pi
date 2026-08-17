@@ -43,6 +43,8 @@ export interface DesktopAgentRuntime {
 	start(workspace: string): Promise<string | undefined>;
 	/** Stop cached state for a removed workspace. */
 	discardWorkspace(workspace: string): Promise<void>;
+	/** Reset status to no-workspace after the active workspace was removed (backends already discarded). */
+	deactivateWorkspace(workspace: string): void;
 	/** Stop everything (app quit). */
 	stop(): Promise<void>;
 	/** Stop every backend without touching status (session storage changed). */
@@ -69,6 +71,8 @@ export interface DesktopAgentRuntime {
 
 	// Host services (zero-backend availability)
 	listModels(): Promise<ModelInfo[]>;
+	/** Reload the model catalog from disk (e.g. after models.json changes). */
+	reloadModels(): Promise<void>;
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]>;
 	setApiKey(provider: string, apiKey: string): Promise<void>;
 	removeCredential(provider: string): Promise<void>;

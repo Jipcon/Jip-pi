@@ -20,6 +20,8 @@ export interface AgentHostServices {
 
 	/** Model catalog, based on the shared credential state. */
 	listModels(): Promise<ModelInfo[]>;
+	/** Reload the model catalog from disk (e.g. after models.json changes). */
+	reloadModels(): Promise<void>;
 
 	/** Read-only auth status for every known provider (never key values). */
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]>;

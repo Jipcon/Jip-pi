@@ -539,6 +539,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "get_available_models", { models });
 			}
 
+			case "reload_models": {
+				await session.modelRuntime.refresh({ allowNetwork: false });
+				return success(id, "reload_models");
+			}
+
 			// =================================================================
 			// Thinking
 			// =================================================================

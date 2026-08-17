@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import { all, common } from "lowlight";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -10,9 +11,13 @@ const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [
 	remarkGfm,
 	[remarkMath, { singleDollarTextMath: false }],
 ];
+// rehype-highlight ships only the 37 common languages; PowerShell is not
+// among them, so register it from lowlight's `all` set (same highlight.js
+// version lowlight uses internally, avoiding a cross-version LanguageFn).
+const HIGHLIGHT_LANGUAGES = { ...common, powershell: all.powershell };
 const REHYPE_PLUGINS: NonNullable<Options["rehypePlugins"]> = [
 	[rehypeKatex, { strict: "ignore" }],
-	[rehypeHighlight, { detect: false }],
+	[rehypeHighlight, { detect: false, languages: HIGHLIGHT_LANGUAGES }],
 ];
 /**
  * Code block with a copy button. The button lives in a non-scrolling wrapper

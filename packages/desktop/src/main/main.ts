@@ -9,6 +9,7 @@
  *   comparison.
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
 	AuthPromptResponse,
@@ -23,11 +24,13 @@ import {
 	SdkHostServices,
 } from "@earendil-works/pi-sdk-adapter";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import type { CustomProviderConfig } from "../shared/ipc.ts";
 import { DEFAULT_SESSION_STORAGE, IPC, type SessionStorageConfig } from "../shared/ipc.ts";
 import { workspacePathsEqual } from "../shared/workspace-path.ts";
 import { createAgentEventForwarder } from "./agent-event-forwarder.ts";
 import { AgentHost, agentDirPath } from "./agent-host.ts";
 import type { DesktopAgentRuntime } from "./agent-runtime.ts";
+import { deleteCustomProvider, listCustomProviders, saveCustomProvider } from "./custom-providers-store.ts";
 import {
 	type DesktopSettings,
 	loadDesktopSettings,
@@ -112,6 +115,16 @@ const agentHost = new AgentHost({
 	renameCatalogSession: (sessionId, name) => renameCatalogSession(sessionCatalogOptions(), sessionId, name),
 });
 
+async function deleteSessionFile(file: string): Promise<void> {
+	await shell.trashItem(file);
+	agentHost.invalidate();
+}
+
+/** Path to the shared models.json the GUI edits for custom providers. */
+function modelsJsonPath(): string {
+	return join(agentDirPath(), "models.json");
+}
+
 const hostServices = new SdkHostServices({
 	agentDir: agentDirPath(),
 	openExternalUrl: (url) => shell.openExternal(url),
@@ -127,10 +140,7 @@ const runtime: DesktopAgentRuntime = sdkMode
 			listCatalogSessions: () => agentHost.listSessions(),
 			createSessionFile: (workspace, sessionDir) => agentHost.createSessionFile(workspace, sessionDir),
 			renameCatalogSession: (sessionId, name) => agentHost.renameCatalogSession(sessionId, name),
-			deleteCatalogFile: async (file) => {
-				await shell.trashItem(file);
-				agentHost.invalidate();
-			},
+			deleteCatalogFile: deleteSessionFile,
 			resolveFreshSessionDefaults: (workspacePath, pendingModel) =>
 				resolveFreshSessionDefaults({
 					workspacePath,
@@ -144,10 +154,7 @@ const runtime: DesktopAgentRuntime = sdkMode
 	: new LegacyBackendManager({
 			findSession: (sessionId) => agentHost.findSession(sessionId),
 			renameCatalogSession: (sessionId, name) => agentHost.renameCatalogSession(sessionId, name),
-			deleteCatalogFile: async (file) => {
-				await shell.trashItem(file);
-				agentHost.invalidate();
-			},
+			deleteCatalogFile: deleteSessionFile,
 		});
 
 async function startWorkspace(workspace: string): Promise<string | undefined> {
@@ -270,11 +277,31 @@ function registerIpc(): void {
 	ipcMain.handle(IPC.workspaceRemove, (_event, workspace: string) =>
 		toCommandResult(async () => {
 			const activeWorkspace = runtime.currentStatus.workspace;
-			if (!sdkMode && runtime.isRunning && activeWorkspace && workspacePathsEqual(activeWorkspace, workspace)) {
-				throw new Error("Switch to another workspace before removing the active workspace");
-			}
-			// Stop any cached backends for the removed workspace.
+			const wasActive = activeWorkspace !== null && workspacePathsEqual(activeWorkspace, workspace);
+			// Stop any cached backends for the removed workspace so no session
+			// is streaming when its files are deleted. Must run before trashing
+			// the directory: the legacy RPC subprocess uses the workspace as
+			// its cwd, which Windows locks while the process is alive.
 			await runtime.discardWorkspace(workspace);
+			// Delete every session that belongs to the workspace, then drop the
+			// workspace from the recent list.
+			agentHost.invalidate();
+			const sessions = await agentHost.listSessions();
+			const workspaceSessionFiles = sessions
+				.filter((session) => session.workspacePath && workspacePathsEqual(session.workspacePath, workspace))
+				.map((session) => session.file)
+				.filter((file): file is string => file !== undefined);
+			await Promise.all(workspaceSessionFiles.map((file) => deleteSessionFile(file)));
+			// Move the workspace directory itself to the Trash as well. Sessions
+			// stored outside it (default/custom session root) were handled above.
+			if (existsSync(workspace)) {
+				await shell.trashItem(workspace);
+			}
+			// If the removed workspace was the active one, reset the runtime
+			// status so the renderer leaves the (now deleted) chat view.
+			if (wasActive) {
+				runtime.deactivateWorkspace(workspace);
+			}
 			removeWorkspace(workspace);
 			agentHost.invalidate();
 			return [...desktopSettings.recentWorkspaces];
@@ -372,6 +399,8 @@ function registerIpc(): void {
 
 	ipcMain.handle(IPC.agentListModels, () => toCommandResult(() => runtime.listModels()));
 
+	ipcMain.handle(IPC.modelsReload, () => toCommandResult(() => runtime.reloadModels()));
+
 	ipcMain.handle(IPC.agentSetModel, (_event, workspaceId: string, sessionId: string, model: ModelRef) =>
 		toCommandResult(() => runtime.setModel(workspaceId, sessionId, model)),
 	);
@@ -402,6 +431,24 @@ function registerIpc(): void {
 
 	ipcMain.handle(IPC.authRespondPrompt, (_event, requestId: string, response: AuthPromptResponse) =>
 		toCommandResult(() => runtime.respondToAuthPrompt(requestId, response)),
+	);
+
+	ipcMain.handle(IPC.customProvidersList, () => toCommandResult(() => listCustomProviders(modelsJsonPath())));
+
+	ipcMain.handle(IPC.customProvidersSave, (_event, config: CustomProviderConfig) =>
+		toCommandResult(async () => {
+			saveCustomProvider(modelsJsonPath(), config);
+			// Reload the backend catalog so the new provider is usable without
+			// an app restart, then the renderer re-fetches models/auth status.
+			await runtime.reloadModels();
+		}),
+	);
+
+	ipcMain.handle(IPC.customProvidersDelete, (_event, providerId: string) =>
+		toCommandResult(async () => {
+			deleteCustomProvider(modelsJsonPath(), providerId);
+			await runtime.reloadModels();
+		}),
 	);
 
 	ipcMain.handle(

@@ -100,6 +100,10 @@ export class LegacyBackendManager implements DesktopAgentRuntime {
 		return this.delegate.discardWorkspace(workspace);
 	}
 
+	deactivateWorkspace(workspace: string): void {
+		this.delegate.deactivateWorkspace(workspace);
+	}
+
 	stop(): Promise<void> {
 		return this.delegate.stop();
 	}
@@ -211,6 +215,10 @@ export class LegacyBackendManager implements DesktopAgentRuntime {
 
 	listModels(): Promise<ModelInfo[]> {
 		return this.delegate.listModels();
+	}
+
+	reloadModels(): Promise<void> {
+		return this.delegate.reloadModels();
 	}
 
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {

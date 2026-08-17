@@ -140,6 +140,7 @@ function fakeHostServices(): SdkBackendManagerOptions["hostServices"] {
 			capabilities: {},
 		}),
 		listModels: async () => [],
+		reloadModels: async () => {},
 		listProviderAuthStatus: async () => [],
 		setApiKey: async () => {},
 		removeCredential: async () => {},

@@ -8,6 +8,8 @@ import { MarkdownContent } from "../src/renderer/components/MarkdownContent.tsx"
 import { ChatView } from "../src/renderer/components/ChatView.tsx";
 import { GenericToolRenderer } from "../src/renderer/components/GenericToolRenderer.tsx";
 import { MessageItem } from "../src/renderer/components/MessageItem.tsx";
+import { CustomProviderDialog } from "../src/renderer/components/settings/CustomProviderDialog.tsx";
+import { CustomProvidersSection } from "../src/renderer/components/settings/CustomProvidersSection.tsx";
 import { SettingsPanel } from "../src/renderer/components/SettingsPanel.tsx";
 import { Sidebar, MAX_SESSION_TITLE_LENGTH, truncateSessionTitle } from "../src/renderer/components/Sidebar.tsx";
 import { TopBar } from "../src/renderer/components/TopBar.tsx";
@@ -1690,13 +1692,22 @@ describe("Sidebar", () => {
 			"session-context-menu-surface",
 		);
 		fireEvent.click(screen.getByRole("menuitem", { name: "Remove workspace" }));
+		// A confirmation dialog opens; confirm the removal.
+		await waitFor(() => expect(screen.getByTestId("remove-workspace-dialog")).toBeTruthy());
+		fireEvent.click(screen.getByTestId("remove-workspace-confirm"));
 		await waitFor(() => expect(removeWorkspaceEntry).toHaveBeenCalledWith("D:\\old-project"));
 
 		fireEvent.contextMenu(screen.getByRole("button", { name: /^pi$/i }), {
 			clientX: 120,
 			clientY: 160,
 		});
-		expect((screen.getByRole("menuitem", { name: "Remove workspace" }) as HTMLButtonElement).disabled).toBe(true);
+		// The active workspace can be removed too; the runtime resets to
+		// no-workspace afterward, so the menu item is no longer disabled.
+		expect((screen.getByRole("menuitem", { name: "Remove workspace" }) as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.click(screen.getByRole("menuitem", { name: "Remove workspace" }));
+		await waitFor(() => expect(screen.getByTestId("remove-workspace-dialog")).toBeTruthy());
+		fireEvent.click(screen.getByTestId("remove-workspace-confirm"));
+		await waitFor(() => expect(removeWorkspaceEntry).toHaveBeenCalledWith("D:\\pi"));
 	});
 
 	test("keeps a remembered workspace visible after its blank session is no longer active", () => {
@@ -1998,5 +2009,137 @@ describe("truncateSessionTitle", () => {
 	test("trims trailing whitespace before the ellipsis", () => {
 		const title = `${"a".repeat(MAX_SESSION_TITLE_LENGTH - 1)} ${"b".repeat(10)}`;
 		expect(truncateSessionTitle(title)).toBe(`${"a".repeat(MAX_SESSION_TITLE_LENGTH - 1)}…`);
+	});
+});
+
+describe("CustomProvidersSection", () => {
+	const providers = [
+		{ id: "my-local", name: "My Local", baseUrl: "http://localhost:11434/v1", api: "openai-completions", models: [{ id: "a" }, { id: "b" }] },
+		{ id: "proxy", baseUrl: "https://proxy.example.com", api: "anthropic-messages", models: [{ id: "c" }] },
+	];
+
+	test("renders the list and fires add", () => {
+		const onAdd = vi.fn();
+		render(<CustomProvidersSection providers={providers} busy={false} onAdd={onAdd} onEdit={vi.fn()} onDelete={vi.fn()} onReload={vi.fn()} />);
+		expect(screen.getByTestId("custom-providers-section")).toBeTruthy();
+		expect(screen.getByText("2 models")).toBeTruthy();
+		expect(screen.getByText("1 model")).toBeTruthy();
+		fireEvent.click(screen.getByTestId("custom-providers-add"));
+		expect(onAdd).toHaveBeenCalledTimes(1);
+	});
+
+	test("edit and delete buttons fire with the provider id", () => {
+		const onEdit = vi.fn();
+		const onDelete = vi.fn();
+		vi.stubGlobal("confirm", () => true);
+		render(<CustomProvidersSection providers={providers} busy={false} onAdd={vi.fn()} onEdit={onEdit} onDelete={onDelete} onReload={vi.fn()} />);
+		fireEvent.click(screen.getByTestId("custom-provider-edit-my-local"));
+		expect(onEdit).toHaveBeenCalledWith("my-local");
+		fireEvent.click(screen.getByTestId("custom-provider-delete-proxy"));
+		expect(onDelete).toHaveBeenCalledWith("proxy");
+	});
+
+	test("delete is suppressed when confirm is dismissed", () => {
+		const onDelete = vi.fn();
+		vi.stubGlobal("confirm", () => false);
+		render(<CustomProvidersSection providers={providers} busy={false} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={onDelete} onReload={vi.fn()} />);
+		fireEvent.click(screen.getByTestId("custom-provider-delete-my-local"));
+		expect(onDelete).not.toHaveBeenCalled();
+	});
+});
+
+describe("CustomProviderDialog", () => {
+	test("add flow collects and serializes the config", async () => {
+		const onSave = vi.fn(async () => {});
+		render(<CustomProviderDialog busy={false} error={null} onSave={onSave} onClose={vi.fn()} />);
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "my-local" } });
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://localhost:11434/v1" } });
+		fireEvent.change(screen.getByTestId("custom-provider-api"), { target: { value: "anthropic-messages" } });
+		fireEvent.change(screen.getByTestId("custom-provider-model-id-0"), { target: { value: "qwen:7b" } });
+		fireEvent.change(screen.getByTestId("custom-provider-model-context-0"), { target: { value: "128000" } });
+		fireEvent.click(screen.getByTestId("custom-provider-model-reasoning-0"));
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+		const config = onSave.mock.calls[0][0];
+		expect(config).toMatchObject({ id: "my-local", baseUrl: "http://localhost:11434/v1", api: "anthropic-messages" });
+		expect(config.authHeader).toBeUndefined();
+		expect(config.models[0]).toMatchObject({ id: "qwen:7b", reasoning: true, contextWindow: 128000 });
+		// Text-only input is the default and is omitted from the serialized model.
+		expect(config.models[0].input).toBeUndefined();
+	});
+
+	test("edit flow prefills initial values and disables the id field", async () => {
+		const onSave = vi.fn(async () => {});
+		const initial = {
+			id: "my-local",
+			name: "My Local",
+			baseUrl: "http://x",
+			api: "openai-completions" as const,
+			authHeader: true,
+			headers: { "x-key": "$K" },
+			models: [{ id: "m1", reasoning: true, input: ["text", "image"] as ("text" | "image")[], contextWindow: 200000, maxTokens: 4096 }],
+		};
+		render(<CustomProviderDialog initial={initial} busy={false} error={null} onSave={onSave} onClose={vi.fn()} />);
+		expect((screen.getByTestId("custom-provider-id") as HTMLInputElement).disabled).toBe(true);
+		expect((screen.getByTestId("custom-provider-id") as HTMLInputElement).value).toBe("my-local");
+		expect((screen.getByTestId("custom-provider-base-url") as HTMLInputElement).value).toBe("http://x");
+		expect((screen.getByTestId("custom-provider-auth-header") as HTMLInputElement).checked).toBe(true);
+		expect((screen.getByTestId("custom-provider-model-reasoning-0") as HTMLInputElement).checked).toBe(true);
+		expect((screen.getByTestId("custom-provider-model-context-0") as HTMLInputElement).value).toBe("200000");
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+		expect(onSave.mock.calls[0][0]).toMatchObject({ id: "my-local", authHeader: true, headers: { "x-key": "$K" } });
+		expect(onSave.mock.calls[0][0].models[0]).toMatchObject({ id: "m1", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 4096 });
+	});
+
+	test("blocks save when no model id is provided", async () => {
+		const onSave = vi.fn(async () => {});
+		render(<CustomProviderDialog busy={false} error={null} onSave={onSave} onClose={vi.fn()} />);
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "p" } });
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(screen.getByText(/at least one model/i)).toBeTruthy());
+		expect(onSave).not.toHaveBeenCalled();
+	});
+});
+
+describe("SettingsPanel custom providers", () => {
+	test("Providers section lists custom providers and adds one through the dialog", async () => {
+		const onSaveCustomProvider = vi.fn(async () => {});
+		const listCustomProviders = vi.fn(async () => [
+			{ id: "my-local", name: "My Local", baseUrl: "http://x", api: "openai-completions", models: [{ id: "m" }] },
+		]);
+		render(
+			<SettingsPanel
+				logs={[]}
+				showThinking={false}
+				showToolDetails={false}
+				showTurnStatus={true}
+				onShowTurnStatusChange={vi.fn()}
+				sessionStorage={{ mode: "default" }}
+				storageBusy={false}
+				onShowThinkingChange={vi.fn()}
+				onShowToolDetailsChange={vi.fn()}
+				onPickSessionStorageRoot={vi.fn(async () => null)}
+				onSessionStorageChange={vi.fn(async () => {})}
+				onListCustomProviders={listCustomProviders}
+				onSaveCustomProvider={onSaveCustomProvider}
+				onDeleteCustomProvider={vi.fn(async () => {})}
+				onReloadModels={vi.fn(async () => {})}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByTestId("settings-nav-providers"));
+		await waitFor(() => expect(screen.getByTestId("custom-providers-section")).toBeTruthy());
+		expect(listCustomProviders).toHaveBeenCalled();
+		expect(screen.getByText("My Local")).toBeTruthy();
+		fireEvent.click(screen.getByTestId("custom-providers-add"));
+		expect(screen.getByTestId("custom-provider-dialog")).toBeTruthy();
+		fireEvent.change(screen.getByTestId("custom-provider-id"), { target: { value: "new" } });
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://y" } });
+		fireEvent.change(screen.getByTestId("custom-provider-model-id-0"), { target: { value: "m1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-save"));
+		await waitFor(() => expect(onSaveCustomProvider).toHaveBeenCalledTimes(1));
+		expect(onSaveCustomProvider.mock.calls[0][0]).toMatchObject({ id: "new", baseUrl: "http://y", api: "openai-completions" });
 	});
 });

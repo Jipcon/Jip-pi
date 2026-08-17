@@ -246,6 +246,13 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		}
 	}
 
+	/** Reset status to no-workspace after the active workspace was removed. */
+	deactivateWorkspace(workspace: string): void {
+		if (this.status.workspace && workspacePathKey(this.status.workspace) === workspacePathKey(workspace)) {
+			this.setStatus({ phase: "no-workspace", workspace: null });
+		}
+	}
+
 	/** Stop everything and forget the pools (app quit). */
 	async stop(): Promise<void> {
 		this.switchGeneration += 1;
@@ -663,6 +670,10 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 
 	listModels(): Promise<ModelInfo[]> {
 		return this.options.hostServices.listModels();
+	}
+
+	reloadModels(): Promise<void> {
+		return this.options.hostServices.reloadModels();
 	}
 
 	listProviderAuthStatus(): Promise<ProviderAuthStatus[]> {

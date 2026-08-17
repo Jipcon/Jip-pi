@@ -31,10 +31,14 @@ import { TopBar } from "./components/TopBar.tsx";
 import { WorkspacePicker } from "./components/WorkspacePicker.tsx";
 import {
 	cancelOAuthLogin,
+	deleteCustomProvider,
+	listCustomProviders,
 	loginProviderOAuth,
 	pickWorkspaceAndStart,
 	removeProviderCredential,
+	reloadModelCatalog,
 	respondToAuthPrompt,
+	saveCustomProvider,
 	saveProviderApiKey,
 	setSessionStorage as applySessionStorage,
 	startWorkspace,
@@ -318,6 +322,10 @@ export function App(): React.JSX.Element {
 					onSaveApiKey={(provider, apiKey) => saveProviderApiKey(provider, apiKey)}
 					onRemoveCredential={(provider) => removeProviderCredential(provider)}
 					onStartOAuthLogin={(provider) => void startOAuthLogin(provider)}
+					onListCustomProviders={listCustomProviders}
+					onSaveCustomProvider={saveCustomProvider}
+					onDeleteCustomProvider={deleteCustomProvider}
+					onReloadModels={reloadModelCatalog}
 					onClose={closeSettings}
 				/>
 			)}

@@ -10,7 +10,7 @@ import type {
 	UserMessage,
 } from "@earendil-works/pi-agent-protocol";
 import { useEffect, useSyncExternalStore } from "react";
-import type { BackendStatus, SessionStorageConfig } from "../../shared/ipc.ts";
+import type { BackendStatus, CustomProviderConfig, SessionStorageConfig } from "../../shared/ipc.ts";
 import { workspacePathsEqual } from "../../shared/workspace-path.ts";
 import { AgentStore } from "./store.ts";
 
@@ -278,6 +278,17 @@ export async function refreshModelCatalog(): Promise<boolean> {
 	return store.getSnapshot().models.length > 0;
 }
 
+/**
+ * Reload the model catalog from disk (models.json) in the backend, then
+ * refresh the GUI's cached model list and provider auth status. Use this
+ * after models.json changes so new/edited custom providers appear without an
+ * app restart.
+ */
+export async function reloadModelCatalog(): Promise<void> {
+	await window.agent.reloadModels();
+	await Promise.all([refreshModels(), refreshProviderAuth()]);
+}
+
 export async function refreshSessionUsage(workspaceId: string, sessionId: string): Promise<void> {
 	const generation = ++usageRefreshGeneration;
 	try {
@@ -329,7 +340,11 @@ export async function refreshSessions(workspaceId: string): Promise<void> {
 }
 
 export async function removeWorkspaceEntry(workspace: string): Promise<void> {
+	const wasActive = workspacePathsEqual(store.getSnapshot().status.workspace ?? "", workspace);
 	const workspaces = await window.agent.removeWorkspace(workspace);
+	if (wasActive) {
+		store.dispatch({ type: "active-session", sessionId: null });
+	}
 	store.dispatch({ type: "workspaces", workspaces });
 	await refreshSessionCatalog();
 }
@@ -540,6 +555,26 @@ export async function removeProviderCredential(provider: string): Promise<void> 
 	await window.agent.removeCredential(provider);
 	await refreshProviderAuth();
 	await refreshModelCatalog();
+}
+
+/** List GUI-managed custom providers from models.json. */
+export async function listCustomProviders(): Promise<CustomProviderConfig[]> {
+	return window.agent.listCustomProviders();
+}
+
+/**
+ * Save (upsert) a custom provider to models.json, reload the backend catalog,
+ * and refresh the GUI so the provider is immediately selectable.
+ */
+export async function saveCustomProvider(config: CustomProviderConfig): Promise<void> {
+	await window.agent.saveCustomProvider(config);
+	await Promise.all([refreshModels(), refreshProviderAuth()]);
+}
+
+/** Delete a custom provider from models.json, reload, and refresh the GUI. */
+export async function deleteCustomProvider(providerId: string): Promise<void> {
+	await window.agent.deleteCustomProvider(providerId);
+	await Promise.all([refreshModels(), refreshProviderAuth()]);
 }
 
 /**

@@ -22,6 +22,7 @@
 		"@earendil-works/pi-gui-adapter": "^0.1.0",
 		"@earendil-works/pi-sdk-adapter": "^0.1.0",
 		"katex": "0.16.47",
+		"lowlight": "3.3.0",
 		"react": "19.2.8",
 		"react-dom": "19.2.8",
 		"react-markdown": "10.1.0",

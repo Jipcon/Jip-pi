@@ -40,6 +40,10 @@ export const IPC = {
 	agentGetSessionUsage: "agent:getSessionUsage",
 	agentListModels: "agent:listModels",
 	agentSetModel: "agent:setModel",
+	modelsReload: "models:reload",
+	customProvidersList: "customProviders:list",
+	customProvidersSave: "customProviders:save",
+	customProvidersDelete: "customProviders:delete",
 	agentListThinkingLevels: "agent:listThinkingLevels",
 	agentSetThinkingLevel: "agent:setThinkingLevel",
 	authListStatus: "auth:listStatus",
@@ -76,6 +80,51 @@ export interface SessionStorageConfig {
 }
 
 export const DEFAULT_SESSION_STORAGE: SessionStorageConfig = { mode: "workspace" };
+
+/**
+ * Custom provider configuration managed by the GUI and persisted to
+ * ~/.pi/agent/models.json. Deliberately a subset of Pi's ProviderConfig:
+ * the API key is not part of this schema — credentials are stored through
+ * the shared credential API (auth.json) via the existing API-key dialog, so
+ * secrets never land in models.json through the GUI.
+ */
+export type CustomProviderApi =
+	| "openai-completions"
+	| "openai-responses"
+	| "anthropic-messages"
+	| "google-generative-ai";
+
+export interface CustomProviderModelConfig {
+	/** Model identifier passed to the API. */
+	id: string;
+	/** Display name. Defaults to id when omitted. */
+	name?: string;
+	/** Whether the model supports extended thinking. */
+	reasoning?: boolean;
+	/** Supported input content types. */
+	input?: ("text" | "image")[];
+	/** Context window size in tokens. */
+	contextWindow?: number;
+	/** Maximum output tokens. */
+	maxTokens?: number;
+}
+
+export interface CustomProviderConfig {
+	/** Provider id (also the key in models.json `providers`). */
+	id: string;
+	/** Display name shown in /login and the provider list. */
+	name?: string;
+	/** API endpoint URL. */
+	baseUrl: string;
+	/** API streaming implementation to use. */
+	api: CustomProviderApi;
+	/** Add `Authorization: Bearer <apiKey>` to requests. */
+	authHeader?: boolean;
+	/** Custom headers (values use models.json value-resolution syntax). */
+	headers?: Record<string, string>;
+	/** Models to register under this provider. Replaces the provider's list. */
+	models: CustomProviderModelConfig[];
+}
 
 export interface CommandResult<T = undefined> {
 	ok: boolean;

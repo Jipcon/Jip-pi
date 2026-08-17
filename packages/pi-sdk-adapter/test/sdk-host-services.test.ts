@@ -8,7 +8,7 @@ import {
 	type OAuthCredential,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { SdkHostServices } from "../src/sdk-host-services.ts";
 
 /**
@@ -202,5 +202,16 @@ describe("SdkHostServices", () => {
 		expect(handshake.backend.id).toBe("pi");
 		expect(handshake.capabilities.sessions).toBe(false);
 		expect(handshake.capabilities.models).toBe(true);
+	});
+
+	test("reloadModels refreshes the shared runtime in-process", async () => {
+		const { runtime } = await createTestRuntime();
+		new ModelRegistry(runtime).registerProvider(fauxProvider({ provider: "host-faux" }).provider);
+		await runtime.refresh({ allowNetwork: false });
+		const services = new SdkHostServices({ agentDir: "C:\\agent", modelRuntime: runtime });
+		const refreshSpy = vi.spyOn(runtime, "refresh");
+		await services.reloadModels();
+		expect(refreshSpy).toHaveBeenCalled();
+		refreshSpy.mockRestore();
 	});
 });
