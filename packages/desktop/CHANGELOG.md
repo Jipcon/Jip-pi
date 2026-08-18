@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Adds the `customProviders:matchModels` IPC channel and the
   `matchCustomProviderModels` bridge method.
 
+- Markdown code highlighting now registers a curated set beyond the 37
+  `lowlight` common languages: awk, clojure, dart, dos, elixir, erlang,
+  fsharp, groovy, haskell, julia, ocaml, powershell, scala. Labeled code
+  fences show the language name in the top-left corner instead of the
+  generic code icon (unlabeled fences keep the icon).
+
 - Custom listbox (`Select.tsx`) replaces the native `<select>` popups in the
   top bar (OS-rendered popups cannot be styled): surface-overlay panel with
   strong border and shadow, accent indicator bar + check on the selected

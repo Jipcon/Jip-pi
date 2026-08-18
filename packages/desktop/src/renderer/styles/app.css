@@ -1504,6 +1504,19 @@ textarea:focus-visible {
 	pointer-events: none;
 }
 
+/* Language label replacing the code marker for labeled fences. */
+.code-block-language {
+	position: absolute;
+	top: 10px;
+	left: 11px;
+	color: var(--text-faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: lowercase;
+	pointer-events: none;
+}
+
 /* Code block copy button: anchored to the non-scrolling .code-block wrapper
    so it stays pinned at the top-right while code lines scroll underneath. */
 .code-copy-button {

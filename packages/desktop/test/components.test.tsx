@@ -30,6 +30,18 @@ describe("MarkdownContent code blocks", () => {
 		expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
 	});
 
+	test("labeled fences show the language name instead of the code icon", () => {
+		render(<MarkdownContent text={"```typescript\nconst a = 1;\n```"} />);
+		expect(screen.getByTestId("code-block-language").textContent).toBe("typescript");
+		expect(screen.queryByTestId("code-block-marker")).toBeNull();
+	});
+
+	test("unlabeled fences keep the code icon", () => {
+		render(<MarkdownContent text={"```\nplain\n```"} />);
+		expect(screen.getByTestId("code-block-marker")).toBeTruthy();
+		expect(screen.queryByTestId("code-block-language")).toBeNull();
+	});
+
 	test("inline code has no copy button", () => {
 		render(<MarkdownContent text={"use `npm run check` here"} />);
 		expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();

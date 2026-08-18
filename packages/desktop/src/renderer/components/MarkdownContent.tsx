@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { all, common } from "lowlight";
 import rehypeHighlight from "rehype-highlight";
@@ -11,14 +11,45 @@ const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [
 	remarkGfm,
 	[remarkMath, { singleDollarTextMath: false }],
 ];
-// rehype-highlight ships only the 37 common languages; PowerShell is not
-// among them, so register it from lowlight's `all` set (same highlight.js
-// version lowlight uses internally, avoiding a cross-version LanguageFn).
-const HIGHLIGHT_LANGUAGES = { ...common, powershell: all.powershell };
+// rehype-highlight only registers the languages we hand it. Importing
+// lowlight's full `all` set (192 languages) would bloat the renderer
+// bundle, so start from the 37-language `common` subset and cherry-pick a
+// curated set of frequent programming languages plus command-line dialects
+// that are missing from `common` (same highlight.js version lowlight uses
+// internally, avoiding cross-version LanguageFn mismatches).
+const HIGHLIGHT_LANGUAGES = {
+	...common,
+	awk: all.awk,
+	clojure: all.clojure,
+	dart: all.dart,
+	dos: all.dos,
+	elixir: all.elixir,
+	erlang: all.erlang,
+	fsharp: all.fsharp,
+	groovy: all.groovy,
+	haskell: all.haskell,
+	julia: all.julia,
+	ocaml: all.ocaml,
+	powershell: all.powershell,
+	scala: all.scala,
+};
 const REHYPE_PLUGINS: NonNullable<Options["rehypePlugins"]> = [
 	[rehypeKatex, { strict: "ignore" }],
 	[rehypeHighlight, { detect: false, languages: HIGHLIGHT_LANGUAGES }],
 ];
+/**
+ * Language name from the code element's `language-*` class, when present.
+ * react-markdown and rehype-highlight both emit it (e.g. `language-typescript`).
+ */
+function codeLanguage(children: React.ReactNode): string | null {
+	if (!isValidElement(children)) {
+		return null;
+	}
+	const className = (children.props as { className?: string }).className;
+	const match = /(?:^|\s)language-([\w#+-]+)/.exec(className ?? "");
+	return match ? match[1] : null;
+}
+
 /**
  * Code block with a copy button. The button lives in a non-scrolling wrapper
  * around the <pre>, so it stays pinned at the top-right while code lines
@@ -31,6 +62,7 @@ function PreBlock({
 	const preRef = useRef<HTMLPreElement>(null);
 	const [copied, setCopied] = useState(false);
 	const resetTimer = useRef<number | undefined>(undefined);
+	const language = codeLanguage(children);
 
 	useEffect(
 		() => () => {
@@ -55,9 +87,15 @@ function PreBlock({
 	return (
 		<div className="code-block">
 			<pre ref={preRef} {...props}>{children}</pre>
-			<span className="code-block-marker" aria-hidden="true">
-				<Icon name="code" size={18} />
-			</span>
+			{language ? (
+				<span className="code-block-language" data-testid="code-block-language">
+					{language}
+				</span>
+			) : (
+				<span className="code-block-marker" aria-hidden="true" data-testid="code-block-marker">
+					<Icon name="code" size={18} />
+				</span>
+			)}
 			<button
 				type="button"
 				className={`code-copy-button${copied ? " code-copy-button-copied" : ""}`}
