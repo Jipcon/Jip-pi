@@ -17,6 +17,8 @@ export interface Capabilities {
 	commands?: boolean;
 	fileDiffs?: boolean;
 	extensionUI?: boolean;
+	/** Editing a past user message by forking a new session before it. */
+	messageEdit?: boolean;
 	[key: string]: unknown;
 }
 

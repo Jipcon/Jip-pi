@@ -11,6 +11,8 @@ import type {
 	AgentMessage,
 	AgentState,
 	AuthPromptResponse,
+	EditAndResendResult,
+	EditableUserMessage,
 	InteractionResponse,
 	ModelInfo,
 	ModelRef,
@@ -68,6 +70,15 @@ export interface DesktopAgentRuntime {
 	listSessions(workspaceId: string): Promise<SessionInfo[]>;
 	renameSession(workspaceId: string, sessionId: string, name: string): Promise<void>;
 	deleteSession(workspaceId: string, sessionId: string): Promise<void>;
+
+	/** Editable user messages of a session (live backend or the catalog file). */
+	listEditableUserMessages(workspaceId: string, sessionId: string): Promise<EditableUserMessage[]>;
+	/**
+	 * Edit a past user message by forking a new session before it (file-level
+	 * Edit a past user message in place: the session tree branches before
+	 * the message (same session file) and the edited text is resent.
+	 */
+	editUserMessage(workspaceId: string, sessionId: string, entryId: string, text: string): Promise<EditAndResendResult>;
 
 	// Host services (zero-backend availability)
 	listModels(): Promise<ModelInfo[]>;

@@ -49,6 +49,8 @@ export const IPC = {
 	customProvidersMatchModels: "customProviders:matchModels",
 	agentListThinkingLevels: "agent:listThinkingLevels",
 	agentSetThinkingLevel: "agent:setThinkingLevel",
+	agentListEditableUserMessages: "agent:listEditableUserMessages",
+	agentEditUserMessage: "agent:editUserMessage",
 	authListStatus: "auth:listStatus",
 	authSetApiKey: "auth:setApiKey",
 	authRemoveCredential: "auth:removeCredential",
@@ -153,14 +155,26 @@ export interface CustomProviderFetchedModel {
 	maxTokens?: number;
 }
 
+/** Catalog lookup request for metadata pre-fill. Credentials are never included. */
+export interface CustomProviderMatchRequest {
+	ids: string[];
+	baseUrl: string;
+	api: CustomProviderApi;
+}
+
 /**
- * Local-catalog metadata merged for one fetched model id. Fields are filled
- * only when every catalog hit with that id agrees; conflicting fields are
- * omitted so the user decides manually.
+ * Local-catalog metadata selected for one fetched model id. Connection hints
+ * disambiguate duplicate ids where possible; unresolved conflicting fields
+ * are omitted so the user decides manually.
  */
 export interface CustomProviderMatchedModel {
 	id: string;
-	/** Display name, when all catalog hits agree. */
+	status: "matched" | "ambiguous" | "unmatched";
+	/** The unique provider selected by URL/API hints, when one exists. */
+	sourceProvider?: string;
+	/** Providers still tied after applying URL/API hints. */
+	candidateProviders?: string[];
+	conflictingFields?: Array<"name" | "reasoning" | "contextWindow" | "maxTokens" | "input" | "thinkingLevelMap">;
 	name?: string;
 	reasoning?: boolean;
 	contextWindow?: number;

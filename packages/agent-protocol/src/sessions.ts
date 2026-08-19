@@ -4,6 +4,19 @@
 
 import type { ModelInfo } from "./models.ts";
 
+/** A historical user message that can be edited by forking a new session before it. */
+export interface EditableUserMessage {
+	/** Session entry id of the user message (stable across the same session file). */
+	entryId: string;
+	/** Plain text of the user message (image blocks are not carried back). */
+	text: string;
+	/** Timestamp of the embedded message, in milliseconds since Unix epoch. */
+	timestamp?: number;
+}
+
+/** Result of editing a past user message and resending it in place. */
+export type EditAndResendResult = { status: "sent" } | { status: "cancelled" };
+
 export interface SessionInfo {
 	id: string;
 	file?: string;

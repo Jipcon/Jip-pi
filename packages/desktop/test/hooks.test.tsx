@@ -10,6 +10,7 @@ import {
 	pickWorkspaceAndStart,
 	removeProviderCredential,
 	renameSessionEntry,
+	resendEditedMessage,
 	saveProviderApiKey,
 	startWorkspace,
 	store,
@@ -356,6 +357,175 @@ describe("session operations", () => {
 
 		await deleteSessionEntry({ id: "only-session", workspacePath: "D:\\work" });
 		expect(store.getSnapshot().activeSessionId).toBeNull();
+	});
+});
+
+describe("message editing (in place)", () => {
+	test("openSession fetches editable user messages alongside the snapshot", async () => {
+		vi.mocked(window.agent.openSession).mockResolvedValue({
+			state: snapshotState("target-session"),
+			messages: [{ role: "user", content: "hello", timestamp: 10 }],
+			usage: null,
+		});
+		vi.mocked(window.agent.listEditableUserMessages).mockResolvedValue([
+			{ entryId: "e1", text: "hello", timestamp: 10 },
+		]);
+		store.dispatch({ type: "status", status: { phase: "running", workspace: "D:\\work" } });
+
+		await openSession("D:\\work", "target-session");
+		expect(window.agent.listEditableUserMessages).toHaveBeenCalledWith("D:\\work", "target-session");
+		expect(store.getSnapshot().sessionStateById["target-session"].messages[0].entryId).toBe("e1");
+	});
+
+	test("agent_stopped realigns editable user messages", async () => {
+		let eventHandler: Parameters<typeof window.agent.subscribe>[0] | undefined;
+		vi.mocked(window.agent.subscribe).mockImplementation((handler) => {
+			eventHandler = handler;
+			return () => {};
+		});
+		vi.mocked(window.agent.onStatus).mockReturnValue(() => {});
+		vi.mocked(window.agent.onHostEvent).mockReturnValue(() => {});
+		vi.mocked(window.agent.getStatus).mockResolvedValue({ phase: "running", workspace: "D:\\work" });
+		vi.mocked(window.agent.listEditableUserMessages).mockResolvedValue([
+			{ entryId: "e-late", text: "late message", timestamp: 42 },
+		]);
+		store.dispatch({
+			type: "session-snapshot",
+			workspaceId: "D:\\work",
+			state: snapshotState("stopped-session"),
+			messages: [{ role: "user", content: "late message", timestamp: 42 }],
+			usage: null,
+			thinkingLevels: [],
+		});
+
+		render(<BridgeProbe />);
+		await waitFor(() => expect(eventHandler).toBeTypeOf("function"));
+		act(() =>
+			eventHandler?.({
+				workspaceId: "D:\\work",
+				sessionId: "stopped-session",
+				event: { type: "agent_stopped" },
+			}),
+		);
+
+		await waitFor(() =>
+			expect(window.agent.listEditableUserMessages).toHaveBeenCalledWith("D:\\work", "stopped-session"),
+		);
+		await waitFor(() =>
+			expect(store.getSnapshot().sessionStateById["stopped-session"].messages[0].entryId).toBe("e-late"),
+		);
+	});
+
+	test("resendEditedMessage truncates optimistically and sends the edit in place", async () => {
+		vi.mocked(window.agent.editUserMessage).mockResolvedValue({ status: "sent" });
+		store.dispatch({
+			type: "session-snapshot",
+			workspaceId: "D:\\work",
+			state: snapshotState("source-session"),
+			messages: [
+				{ role: "user", content: "first", timestamp: 100 },
+				{ role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 150 },
+				{ role: "user", content: "second", timestamp: 200 },
+			],
+			usage: null,
+			thinkingLevels: [],
+			editableUserMessages: [
+				{ entryId: "e1", text: "first", timestamp: 100 },
+				{ entryId: "e2", text: "second", timestamp: 200 },
+			],
+		});
+		store.dispatch({ type: "active-session", sessionId: "source-session" });
+		store.dispatch({
+			type: "session-edit-start",
+			sessionId: "source-session",
+			entryId: "e2",
+			text: "second",
+		});
+
+		await resendEditedMessage("D:\\work", "source-session", "e2", "second (edited)");
+
+		expect(window.agent.editUserMessage).toHaveBeenCalledWith("D:\\work", "source-session", "e2", "second (edited)");
+		// The optimistic truncation dropped the edited message and its answer.
+		const session = store.getSnapshot().sessionStateById["source-session"];
+		expect(session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(session.editing).toBeNull();
+		// Stays in the same session: no reopen, no catalog churn needed.
+		expect(store.getSnapshot().activeSessionId).toBe("source-session");
+	});
+
+	test("resendEditedMessage restores the original history when the backend rejects", async () => {
+		vi.mocked(window.agent.editUserMessage).mockRejectedValue(new Error("prompt rejected"));
+		vi.mocked(window.agent.openSession).mockResolvedValue({
+			state: snapshotState("source-session"),
+			messages: [
+				{ role: "user", content: "first", timestamp: 100 },
+				{ role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 150 },
+				{ role: "user", content: "second", timestamp: 200 },
+			],
+			usage: null,
+		});
+		store.dispatch({ type: "status", status: { phase: "running", workspace: "D:\\work" } });
+		store.dispatch({
+			type: "session-snapshot",
+			workspaceId: "D:\\work",
+			state: snapshotState("source-session"),
+			messages: [
+				{ role: "user", content: "first", timestamp: 100 },
+				{ role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 150 },
+				{ role: "user", content: "second", timestamp: 200 },
+			],
+			usage: null,
+			thinkingLevels: [],
+			editableUserMessages: [
+				{ entryId: "e1", text: "first", timestamp: 100 },
+			{ entryId: "e2", text: "second", timestamp: 200 },
+			],
+		});
+		store.dispatch({
+			type: "session-edit-start",
+			sessionId: "source-session",
+			entryId: "e2",
+			text: "second",
+		});
+
+		await expect(resendEditedMessage("D:\\work", "source-session", "e2", "edited")).rejects.toThrow(
+			"prompt rejected",
+		);
+
+		// The backend rolled the leaf back; the snapshot restores u2-a2.
+		const session = store.getSnapshot().sessionStateById["source-session"];
+		expect(session.messages).toHaveLength(3);
+	});
+
+	test("resendEditedMessage surfaces an extension veto and restores the snapshot", async () => {
+		vi.mocked(window.agent.editUserMessage).mockResolvedValue({ status: "cancelled" });
+		vi.mocked(window.agent.openSession).mockResolvedValue({
+			state: snapshotState("source-session"),
+			messages: [{ role: "user", content: "first", timestamp: 100 }],
+			usage: null,
+		});
+		store.dispatch({ type: "status", status: { phase: "running", workspace: "D:\\work" } });
+		store.dispatch({
+			type: "session-snapshot",
+			workspaceId: "D:\\work",
+			state: snapshotState("source-session"),
+			messages: [{ role: "user", content: "first", timestamp: 100 }],
+			usage: null,
+			thinkingLevels: [],
+			editableUserMessages: [{ entryId: "e1", text: "first", timestamp: 100 }],
+		});
+		store.dispatch({
+			type: "session-edit-start",
+			sessionId: "source-session",
+			entryId: "e1",
+			text: "first",
+		});
+
+		await resendEditedMessage("D:\\work", "source-session", "e1", "edited");
+
+		const snapshot = store.getSnapshot();
+		expect(snapshot.notifications.some((notification) => notification.message.includes("cancelled"))).toBe(true);
+		expect(snapshot.sessionStateById["source-session"].messages).toHaveLength(1);
 	});
 });
 

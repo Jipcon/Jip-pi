@@ -9,6 +9,7 @@ import type {
 	AgentEvent,
 	AgentMessage,
 	AgentState,
+	EditableUserMessage,
 	InteractionResponse,
 	ModelInfo,
 	ModelRef,
@@ -36,6 +37,10 @@ class FakeAgentBackend implements ManagedSessionBackend {
 	customState: AgentState | null = null;
 	/** Messages returned by getMessages. */
 	messages: AgentMessage[] = [];
+	/** Editable user messages returned by editableUserMessages(). */
+	editableMessages: EditableUserMessage[] | null = null;
+	/** Recorded editAndResend calls. */
+	editCalls: Array<{ entryId: string; text: string }> = [];
 	/** When true, getState rejects (simulates a backend shutting down). */
 	failGetState = false;
 	private readonly handlers = new Set<(event: AgentEvent) => void>();
@@ -104,6 +109,18 @@ class FakeAgentBackend implements ManagedSessionBackend {
 		this.pendingInteractions -= 1;
 	}
 	renameSession(_name: string): void {}
+
+	editableUserMessages(): EditableUserMessage[] {
+		return this.editableMessages ?? [];
+	}
+
+	editAndResend(entryId: string, text: string): Promise<{ status: "sent" } | { status: "cancelled" }> {
+		if (this.streaming) {
+			return Promise.reject(new Error("Wait for the current response to finish before editing a message"));
+		}
+		this.editCalls.push({ entryId, text });
+		return Promise.resolve({ status: "sent" });
+	}
 
 	subscribe(handler: (event: AgentEvent) => void): () => void {
 		this.handlers.add(handler);
@@ -177,6 +194,7 @@ function createManagerWithBackend(backend: FakeAgentBackend): SdkBackendManager 
 		createSessionFile: async () => ({ sessionId: "created", sessionFile: "C:\\sessions\\created.jsonl" }),
 		renameCatalogSession: async () => {},
 		deleteCatalogFile: async () => {},
+		readEditableUserMessages: async () => [],
 		createSessionBackend: () => backend,
 	});
 }
@@ -194,6 +212,7 @@ function createManager(overrides: Partial<SdkBackendManagerOptions> = {}): TestH
 		createSessionFile: async () => ({ sessionId: "created", sessionFile: "C:\\sessions\\created.jsonl" }),
 		renameCatalogSession: async () => {},
 		deleteCatalogFile: async () => {},
+		readEditableUserMessages: async () => [],
 		createSessionBackend: () => {
 			const fake = new FakeAgentBackend();
 			fakes.push(fake);
@@ -610,5 +629,85 @@ describe("SdkBackendManager listSessions", () => {
 		const sessions = await manager.listSessions(W1);
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]).toMatchObject({ id: "session-a", preview: "Catalog preview" });
+	});
+});
+
+describe("SdkBackendManager message editing", () => {
+	test("listEditableUserMessages answers from the live backend when materialized", async () => {
+		const { manager } = harness;
+		const backend = (await manager.getOrCreateBackend(W1, "session-a")) as FakeAgentBackend;
+		backend.editableMessages = [{ entryId: "e1", text: "live prompt", timestamp: 10 }];
+
+		const editable = await manager.listEditableUserMessages(W1, "session-a");
+		expect(editable).toEqual([{ entryId: "e1", text: "live prompt", timestamp: 10 }]);
+	});
+
+	test("listEditableUserMessages falls back to the catalog file without a backend", async () => {
+		const { manager } = createManager({
+			readEditableUserMessages: async (file) =>
+				file.includes("history") ? [{ entryId: "e1", text: "stored prompt", timestamp: 10 }] : [],
+		});
+
+		const editable = await manager.listEditableUserMessages(W1, "history-session");
+		expect(editable).toEqual([{ entryId: "e1", text: "stored prompt", timestamp: 10 }]);
+	});
+
+	test("listEditableUserMessages is empty for an unpersisted session", async () => {
+		const { manager } = createManager({
+			findSession: async () => ({ id: "pending-session" }),
+		});
+		const editable = await manager.listEditableUserMessages(W1, "pending-session");
+		expect(editable).toEqual([]);
+	});
+
+	test("editUserMessage rejects while the session is streaming", async () => {
+		const { manager } = harness;
+		const backend = (await manager.getOrCreateBackend(W1, "session-a")) as FakeAgentBackend;
+		backend.streaming = true;
+
+		await expect(manager.editUserMessage(W1, "session-a", "e1", "edited")).rejects.toThrow(
+			"Wait for the current response to finish before editing a message",
+		);
+	});
+
+	test("editUserMessage rejects a session that was never persisted", async () => {
+		const { manager } = createManager({
+			findSession: async (sessionId) => ({ id: sessionId }),
+		});
+		await expect(manager.editUserMessage(W1, "pending-session", "e1", "edited")).rejects.toThrow(
+			"Wait for the first assistant response before editing it",
+		);
+	});
+
+	test("editUserMessage materializes the session on demand and delegates editAndResend", async () => {
+		const { manager, fakes } = harness;
+		const result = await manager.editUserMessage(W1, "session-a", "e1", "edited prompt");
+		expect(result).toEqual({ status: "sent" });
+		// Editing is an explicit user action: the session backend materializes
+		// on demand (history browsing never does).
+		expect(fakes).toHaveLength(1);
+		expect(fakes[0].editCalls).toEqual([{ entryId: "e1", text: "edited prompt" }]);
+	});
+
+	test("editUserMessage surfaces backend errors (unknown entry)", async () => {
+		const failing = new FakeAgentBackend();
+		failing.editAndResend = async (entryId: string) => {
+			throw new Error(`Entry ${entryId} not found`);
+		};
+		const manager = createManagerWithBackend(failing);
+		await expect(manager.editUserMessage(W1, "session-a", "missing", "edited")).rejects.toThrow(
+			"Entry missing not found",
+		);
+		await manager.disposeAll();
+	});
+
+	test("editUserMessage rejects backends without tree support", async () => {
+		const bare = new FakeAgentBackend();
+		bare.editAndResend = undefined;
+		const manager = createManagerWithBackend(bare);
+		await expect(manager.editUserMessage(W1, "session-a", "e1", "edited")).rejects.toThrow(
+			"Message editing is not supported by this backend",
+		);
+		await manager.disposeAll();
 	});
 });

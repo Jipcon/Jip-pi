@@ -101,6 +101,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency closure into `resources/sdk/node_modules`, and the
   electron-builder staged app directory ships it inside `app.asar` so the
   externalized ESM-only SDK resolves at runtime in packaged builds.
+- Edit user messages in place: hovering a past user message shows an edit
+  action (capability-gated via `messageEdit`, hidden while streaming or when
+  the message has no session entry yet); clicking it opens an inline editor
+  in place of the bubble. Cancel (button/Esc) is pure frontend state and
+  changes nothing; Send (button/Enter) branches the session tree before the
+  message in the **same session file** (`AgentSession.navigateTree`),
+  resends the edited text as a new prompt and drops everything after the
+  branch point from the active context (the old continuation stays in the
+  file as an abandoned branch with no branch-switching UI). The renderer
+  truncates the history optimistically and restores the authoritative
+  snapshot when the backend rejects the edit or an extension vetoes it
+  (`session_before_tree`); the composer is disabled while the editor is
+  open. Adds the `agent:listEditableUserMessages` / `agent:editUserMessage`
+  IPC channels and bridge methods; session entry ids are aligned onto
+  rendered messages by timestamp (re-aligned after each turn); editing a
+  not-yet-materialized session materializes it on demand, and an
+  unpersisted session is rejected with an explicit error. v1 resends text
+  only (image attachments are not carried back), and the legacy RPC backend
+  reports the capability as unavailable.
 
 ### Changed
 
@@ -189,3 +208,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<pre>` so it no longer scrolls away with long lines; the block's top
   padding reserves a header band holding the button (top-right) and a
   decorative `</>` marker (top-left), so neither covers the first code line.
+
+- Custom provider model fetch: the fetched-model checklist is now published
+  only after catalog metadata matching settles, and "Add selected" stays
+  disabled until then, so model rows can no longer be created before the
+  pre-fill metadata arrives (previously the parameters stayed empty). Catalog
+  match failures surface as a non-blocking warning instead of being swallowed
+  silently.
+- Custom provider catalog matching now receives the provider's base URL and
+  API type and uses them to disambiguate model ids that appear under several
+  catalog providers (exact or same-origin URL outranks an API match, API is
+  the fallback hint). Ids that stay ambiguous keep only the fields every
+  candidate agrees on and are marked "Catalog match ambiguous" in the
+  checklist instead of silently dropping conflicting values; matching also
+  falls back to a case-insensitive id comparison when no exact hit exists.

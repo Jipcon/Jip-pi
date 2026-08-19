@@ -9,10 +9,11 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { AgentMessage, SessionInfo, SessionUsage } from "@earendil-works/pi-agent-protocol";
+import type { AgentMessage, EditableUserMessage, SessionInfo, SessionUsage } from "@earendil-works/pi-agent-protocol";
 import {
 	createSessionFile as createSessionFileWithSdk,
 	type ReadSessionUsageOptions,
+	readEditableUserMessages as readEditableUserMessagesWithSdk,
 	readSessionHistory as readSessionHistoryWithSdk,
 	readSessionUsage as readSessionUsageWithSdk,
 } from "@earendil-works/pi-sdk-adapter";
@@ -78,5 +79,10 @@ export class AgentHost {
 	async renameCatalogSession(sessionId: string, name: string): Promise<void> {
 		await this.options.renameCatalogSession(sessionId, name);
 		this.invalidate();
+	}
+
+	/** Read the editable user messages of a persisted session (no live backend). */
+	readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]> {
+		return readEditableUserMessagesWithSdk(filePath);
 	}
 }

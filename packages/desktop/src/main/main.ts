@@ -24,7 +24,7 @@ import {
 	SdkHostServices,
 } from "@earendil-works/pi-sdk-adapter";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import type { CustomProviderConfig, CustomProviderFetchRequest } from "../shared/ipc.ts";
+import type { CustomProviderConfig, CustomProviderFetchRequest, CustomProviderMatchRequest } from "../shared/ipc.ts";
 import { DEFAULT_SESSION_STORAGE, IPC, type SessionStorageConfig } from "../shared/ipc.ts";
 import { workspacePathsEqual } from "../shared/workspace-path.ts";
 import { createAgentEventForwarder } from "./agent-event-forwarder.ts";
@@ -152,6 +152,7 @@ const runtime: DesktopAgentRuntime = sdkMode
 				}),
 			readPersistedSessionState: (file) =>
 				readPersistedSessionState(file, { modelRuntime: hostServices.sharedRuntime }),
+			readEditableUserMessages: (file) => agentHost.readEditableUserMessages(file),
 		})
 	: new LegacyBackendManager({
 			findSession: (sessionId) => agentHost.findSession(sessionId),
@@ -457,10 +458,10 @@ function registerIpc(): void {
 		toCommandResult(() => fetchProviderModels(request)),
 	);
 
-	ipcMain.handle(IPC.customProvidersMatchModels, (_event, ids: string[]) =>
+	ipcMain.handle(IPC.customProvidersMatchModels, (_event, request: CustomProviderMatchRequest) =>
 		toCommandResult(async () => {
-			const hits = await runtime.listModelsByIds(ids);
-			return mergeMatchedModels(hits, ids);
+			const hits = await runtime.listModelsByIds(request.ids);
+			return mergeMatchedModels(hits, request);
 		}),
 	);
 
@@ -468,6 +469,24 @@ function registerIpc(): void {
 		IPC.agentRespondInteraction,
 		(_event, workspaceId: string, sessionId: string, id: string, response: InteractionResponse) =>
 			toCommandResult(() => runtime.respondInteraction(workspaceId, sessionId, id, response)),
+	);
+
+	ipcMain.handle(IPC.agentListEditableUserMessages, (_event, workspaceId: string, sessionId: string) =>
+		toCommandResult(() => runtime.listEditableUserMessages(workspaceId, sessionId)),
+	);
+
+	ipcMain.handle(
+		IPC.agentEditUserMessage,
+		(_event, workspaceId: string, sessionId: string, entryId: string, text: string) =>
+			toCommandResult(async () => {
+				const result = await runtime.editUserMessage(workspaceId, sessionId, entryId, text);
+				if (result.status === "sent") {
+					// The session file changed (leaf moved, new entries): invalidate
+					// the catalog so preview/message count refresh without waiting.
+					agentHost.invalidate();
+				}
+				return result;
+			}),
 	);
 
 	ipcMain.handle(IPC.sessionStorageGet, () => toCommandResult(() => runtime.currentSessionStorage));

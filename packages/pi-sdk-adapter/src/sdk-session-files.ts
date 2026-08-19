@@ -5,9 +5,9 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { AgentMessage, ModelInfo } from "@earendil-works/pi-agent-protocol";
+import type { AgentMessage, EditableUserMessage, ModelInfo } from "@earendil-works/pi-agent-protocol";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { loadSdk } from "./sdk-loader.ts";
 import { normalizeSdkMessages, normalizeSdkModel } from "./sdk-normalizer.ts";
 
@@ -133,4 +133,83 @@ export async function readPersistedSessionState(
 		state.thinkingLevel = context.thinkingLevel;
 	}
 	return state;
+}
+
+// ---------------------------------------------------------------------------
+// Editable user messages
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the plain text of a user message's content, mirroring the
+ * runtime's own `extractUserMessageText`: only `text` blocks are joined;
+ * image blocks are not carried back (v1).
+ */
+export function extractUserMessageText(content: unknown): string {
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		return "";
+	}
+	return content
+		.filter(
+			(block): block is { type: "text"; text: string } =>
+				typeof block === "object" &&
+				block !== null &&
+				(block as { type: unknown }).type === "text" &&
+				typeof (block as { text?: unknown }).text === "string",
+		)
+		.map((block) => block.text)
+		.join("");
+}
+
+/**
+ * Build the editable user messages from a branch's entries (the leaf path).
+ * Filters to `message` entries whose role is `user` and whose text is
+ * non-empty, mapping each to `{ entryId, text, timestamp }`. The timestamp
+ * comes from the embedded message (the same value `getMessages()` reports),
+ * so the renderer can align entries to rendered messages exactly.
+ */
+export function extractEditableUserMessages(branch: readonly SessionEntry[]): EditableUserMessage[] {
+	const result: EditableUserMessage[] = [];
+	for (const entry of branch) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as { role?: string; content?: unknown; timestamp?: number };
+		if (message.role !== "user") continue;
+		const text = extractUserMessageText(message.content);
+		if (text.length === 0) continue;
+		const editable: EditableUserMessage = { entryId: entry.id, text };
+		if (typeof message.timestamp === "number") editable.timestamp = message.timestamp;
+		result.push(editable);
+	}
+	return result;
+}
+
+/**
+ * Read the editable user messages of a persisted JSONL session without a
+ * live backend. Mirrors `SessionManager.getBranch()`: the leaf is the last
+ * appended entry (the current branch tip), and the path is walked via
+ * `parentId` to the root. Only the current leaf path is editable, so entries
+ * on abandoned in-file branches never appear.
+ */
+export async function readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]> {
+	const sdk = await loadSdk();
+	const content = await readFile(filePath, "utf8");
+	const fileEntries = sdk.parseSessionEntries(content).filter((entry) => entry.type !== "session");
+	if (fileEntries.length === 0) {
+		return [];
+	}
+	const byId = new Map<string, SessionEntry>();
+	for (const entry of fileEntries) {
+		byId.set(entry.id, entry as SessionEntry);
+	}
+	// _buildIndex sets leafId to the last file entry; replicate that here.
+	const branch: SessionEntry[] = [];
+	let current: SessionEntry | undefined = fileEntries[fileEntries.length - 1] as SessionEntry;
+	while (current) {
+		branch.push(current);
+		current = current.parentId ? byId.get(current.parentId) : undefined;
+	}
+	branch.reverse();
+	return extractEditableUserMessages(branch);
 }

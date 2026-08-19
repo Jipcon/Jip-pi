@@ -109,6 +109,7 @@ export class SdkHostServices implements AgentHostServices {
 				compaction: true,
 				reasoningLevels: true,
 				extensionUI: true,
+				messageEdit: true,
 			},
 		}));
 	}

@@ -12,6 +12,8 @@ import type {
 	AgentMessage,
 	AgentState,
 	AuthPromptResponse,
+	EditAndResendResult,
+	EditableUserMessage,
 	InteractionResponse,
 	ModelInfo,
 	ModelRef,
@@ -211,6 +213,20 @@ export class LegacyBackendManager implements DesktopAgentRuntime {
 		}
 		await this.ensureActiveSession(workspaceId, sessionId);
 		await this.delegate.deleteSession(sessionId);
+	}
+
+	/** Legacy RPC mode does not support message editing (capability off). */
+	listEditableUserMessages(_workspaceId: string, _sessionId: string): Promise<EditableUserMessage[]> {
+		throw new Error("Message editing is not supported in legacy backend mode");
+	}
+
+	editUserMessage(
+		_workspaceId: string,
+		_sessionId: string,
+		_entryId: string,
+		_text: string,
+	): Promise<EditAndResendResult> {
+		throw new Error("Message editing is not supported in legacy backend mode");
 	}
 
 	listModels(): Promise<ModelInfo[]> {

@@ -1114,7 +1114,8 @@ textarea:focus-visible {
 
 .message-row-user {
 	display: flex;
-	justify-content: flex-end;
+	flex-direction: column;
+	align-items: flex-end;
 	padding-left: 12%;
 }
 
@@ -1169,6 +1170,77 @@ textarea:focus-visible {
 
 .user-message-images + .user-message-text {
 	padding-top: 10px;
+}
+
+.user-message-edit {
+	flex: 0 0 auto;
+	margin-top: 6px;
+	background: var(--surface);
+	border-color: var(--border-strong);
+	box-shadow: var(--shadow-small);
+	color: var(--text-muted);
+	opacity: 0;
+	transition:
+		opacity 0.12s ease,
+		color 0.12s ease,
+		background 0.12s ease;
+}
+
+.message-row-user:hover .user-message-edit,
+.user-message-edit:focus-visible {
+	opacity: 1;
+}
+
+.user-message-edit:hover,
+.user-message-edit:focus-visible {
+	background: var(--surface-hover);
+	color: var(--text);
+}
+
+.user-bubble-editing {
+	max-width: 88%;
+	border-color: var(--accent);
+	background: var(--surface);
+	color: var(--text);
+	box-shadow: 0 5px 18px rgba(0, 0, 0, 0.35);
+}
+
+.user-message-editor-hint {
+	color: var(--text-muted);
+	font-size: 11.5px;
+	margin-bottom: 8px;
+}
+
+.user-message-editor-input {
+	width: 100%;
+	min-height: 54px;
+	max-height: 180px;
+	padding: 8px 10px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--canvas);
+	color: var(--text);
+	font: inherit;
+	line-height: 1.55;
+	resize: none;
+	outline: none;
+}
+
+.user-message-editor-input:focus {
+	border-color: var(--accent);
+}
+
+.user-message-editor-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: flex-end;
+	margin-top: 10px;
+}
+
+.user-message-editor-actions .user-message-editor-hint {
+	margin-bottom: 0;
+	margin-right: auto;
 }
 
 .assistant-image {
@@ -2235,6 +2307,9 @@ textarea:focus-visible {
 	display: flex;
 	min-height: 0;
 	flex: 1 1 auto;
+	/* Hard clip so an unscrolled/oversized content pane can never bleed
+	   over the Close action bar below. */
+	overflow: hidden;
 }
 
 .settings-nav {
@@ -2279,6 +2354,7 @@ textarea:focus-visible {
 
 .settings-content {
 	min-width: 0;
+	min-height: 0;
 	flex: 1 1 auto;
 	padding: 18px 22px 18px;
 	overflow-y: auto;
@@ -2297,6 +2373,11 @@ textarea:focus-visible {
 
 .modal-nested {
 	width: 460px;
+}
+
+/* The custom provider dialog stacks more controls than the key dialogs. */
+.modal-nested.modal-wide {
+	width: 600px;
 }
 
 .modal-header {
@@ -2353,6 +2434,20 @@ textarea:focus-visible {
 	flex: 0 0 auto;
 	margin-top: 0;
 	padding: 0 22px 22px;
+}
+
+/* The settings dialog scrolls its content above this bar; give the bar an
+   opaque background, a hairline divider and stacking priority so a
+   sub-pixel rounding overflow can never visually merge with the content.
+   Symmetric padding center the Close button between the divider and the
+   dialog's bottom border. */
+.modal-settings > .modal-actions {
+	position: relative;
+	z-index: 1;
+	align-items: center;
+	border-top: 1px solid var(--border);
+	background: var(--surface-overlay);
+	padding: 16px 22px;
 }
 
 .modal-input,
@@ -3077,6 +3172,18 @@ textarea:focus-visible {
 	margin-top: 10px;
 }
 
+/* Stack label above input: the nested dialog is too narrow for a stable
+   label/input split, and full-width inputs keep long URLs/ids readable. */
+.custom-provider-form > .settings-field {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+}
+
+.custom-provider-form > .settings-field .modal-input {
+	width: 100%;
+}
+
 .custom-provider-subsection {
 	display: flex;
 	flex-direction: column;
@@ -3089,9 +3196,10 @@ textarea:focus-visible {
 
 .custom-provider-subsection-header {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
+	gap: 6px 8px;
 	color: var(--text-secondary);
 	font-size: 12.5px;
 	font-weight: 650;
@@ -3114,9 +3222,10 @@ textarea:focus-visible {
 
 .custom-provider-fetched-header {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
+	gap: 6px 8px;
 	color: var(--text-secondary);
 	font-size: 12px;
 	font-weight: 650;
@@ -3132,9 +3241,11 @@ textarea:focus-visible {
 
 .custom-provider-fetched-row {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px;
-	padding: 4px 2px;
+	gap: 3px 8px;
+	padding: 5px 6px;
+	border-radius: var(--radius-small);
 	cursor: pointer;
 }
 
@@ -3143,11 +3254,14 @@ textarea:focus-visible {
 }
 
 .custom-provider-fetched-row input {
+	flex: 0 0 auto;
 	margin: 0;
 	accent-color: var(--accent);
 }
 
 .custom-provider-fetched-id {
+	flex: 0 1 auto;
+	min-width: 0;
 	overflow: hidden;
 	font-size: 12px;
 	font-variant-numeric: tabular-nums;
@@ -3157,8 +3271,18 @@ textarea:focus-visible {
 
 .custom-provider-fetched-meta {
 	flex: 0 0 auto;
+	padding: 1px 7px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-small);
+	background: var(--surface-raised);
 	color: var(--text-faint);
 	font-size: 11px;
+	white-space: nowrap;
+}
+
+.custom-provider-fetched-ambiguous {
+	border-color: var(--warning);
+	color: var(--warning);
 }
 
 .custom-provider-kv-row,
@@ -3170,7 +3294,8 @@ textarea:focus-visible {
 
 .custom-provider-kv-row .modal-input,
 .custom-provider-model-line .modal-input {
-	flex: 1 1 auto;
+	flex: 1 1 0;
+	min-width: 0;
 	width: auto;
 }
 
@@ -3211,7 +3336,15 @@ textarea:focus-visible {
 }
 
 .modal-input-narrow {
-	width: 130px !important;
+	width: 130px;
+}
+
+/* Inside the model options row the token inputs share the remaining width
+   and wrap onto their own line instead of overflowing the dialog edge. */
+.custom-provider-model-options .modal-input-narrow {
+	flex: 1 1 130px;
+	min-width: 0;
+	width: auto;
 }
 
 .custom-provider-thinking {
@@ -3233,14 +3366,15 @@ textarea:focus-visible {
 
 .custom-provider-thinking-grid {
 	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 6px 10px;
+	grid-template-columns: 1fr;
+	gap: 6px;
 }
 
 .custom-provider-thinking-row {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+	min-width: 0;
 }
 
 .custom-provider-thinking-level {
@@ -3256,7 +3390,7 @@ textarea:focus-visible {
 }
 
 .custom-provider-thinking-row input {
-	flex: 1 1 auto;
+	flex: 1 1 120px;
 	min-width: 0;
 	width: auto;
 }

@@ -17,6 +17,7 @@ import type {
 	AuthFlowEvent,
 	AuthFlowPrompt,
 	AuthFlowUpdate,
+	EditableUserMessage,
 	MessageBlock,
 	MessageDeltaEvent,
 	ModelInfo,
@@ -40,6 +41,8 @@ export interface UiMessage {
 	diagnostics?: AssistantMessageDiagnostic[];
 	timestamp?: number;
 	complete: boolean;
+	/** Session entry id, aligned from `listEditableUserMessages`. */
+	entryId?: string;
 }
 
 /** One structured diagnostics entry shown in Settings. */
@@ -100,6 +103,8 @@ export interface SessionUIState {
 	/** openSession completed for this session (history loaded). */
 	loaded: boolean;
 	error: string | null;
+	/** Inline user-message edit in progress (draft text included). */
+	editing: { entryId: string; text: string } | null;
 	nextId: number;
 }
 
@@ -156,6 +161,7 @@ export type StoreAction =
 			messages: AgentMessage[];
 			usage: SessionUsage | null;
 			thinkingLevels: string[];
+			editableUserMessages?: EditableUserMessage[];
 	  }
 	| {
 			type: "session-state-update";
@@ -164,6 +170,7 @@ export type StoreAction =
 			usage: SessionUsage | null;
 			thinkingLevels?: string[];
 	  }
+	| { type: "session-editable-messages"; sessionId: string; editableUserMessages: EditableUserMessage[] }
 	| { type: "session-open-failed"; sessionId: string; error: string }
 	| { type: "active-session"; sessionId: string | null }
 	| { type: "sessions"; sessions: SessionInfo[] }
@@ -171,6 +178,10 @@ export type StoreAction =
 	| { type: "workspaces"; workspaces: string[] }
 	| { type: "session-catalog-failed" }
 	| { type: "notify"; notification: Omit<NotificationItem, "id"> }
+	| { type: "session-edit-start"; sessionId: string; entryId: string; text: string }
+	| { type: "session-edit-draft"; sessionId: string; text: string }
+	| { type: "session-edit-cancel"; sessionId: string }
+	| { type: "session-edit-commit"; sessionId: string; entryId: string }
 	| { type: "clear-error" }
 	| { type: "dismiss-notification"; id: string }
 	| { type: "dismiss-interaction"; sessionId: string; id: string }
@@ -200,6 +211,7 @@ function emptySessionState(workspaceId: string, sessionId: string): SessionUISta
 		retry: null,
 		loaded: false,
 		error: null,
+		editing: null,
 		nextId: 1,
 	};
 }
@@ -249,6 +261,57 @@ function normalizeAssistantMessage(message: AgentMessage, id: string, complete: 
 		timestamp: message.timestamp,
 		complete,
 	};
+}
+
+/**
+ * Align `entryId`s from `listEditableUserMessages` onto rendered user
+ * messages by exact timestamp, disambiguating same-timestamp entries by
+ * their relative order (both lists are chronological). Messages without a
+ * matching editable entry lose any stale `entryId`. Returns the same array
+ * reference when nothing changed so memoized components can bail out.
+ */
+function alignEntryIds(messages: UiMessage[], editable: readonly EditableUserMessage[]): UiMessage[] {
+	if (editable.length === 0) {
+		let changed = false;
+		const cleared = messages.map((message) => {
+			if (message.role === "user" && message.entryId !== undefined) {
+				changed = true;
+				return { ...message, entryId: undefined };
+			}
+			return message;
+		});
+		return changed ? cleared : messages;
+	}
+	// Per-timestamp queues preserve the editable list's order for ordinal matches.
+	const queuesByTimestamp = new Map<number, EditableUserMessage[]>();
+	for (const entry of editable) {
+		if (entry.timestamp === undefined) continue;
+		const queue = queuesByTimestamp.get(entry.timestamp);
+		if (queue !== undefined) {
+			queue.push(entry);
+		} else {
+			queuesByTimestamp.set(entry.timestamp, [entry]);
+		}
+	}
+	let changed = false;
+	const result = messages.map((message) => {
+		if (message.role !== "user" || message.timestamp === undefined) {
+			return message;
+		}
+		const queue = queuesByTimestamp.get(message.timestamp);
+		const matched = queue?.shift();
+		if (matched) {
+			if (message.entryId !== matched.entryId) {
+				changed = true;
+				return { ...message, entryId: matched.entryId };
+			}
+		} else if (message.entryId !== undefined) {
+			changed = true;
+			return { ...message, entryId: undefined };
+		}
+		return message;
+	});
+	return changed ? result : messages;
 }
 
 function normalizeHistoricalTools(messages: AgentMessage[]): Record<string, ToolCallInfo> {
@@ -343,6 +406,7 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 					? normalizeUserMessage(message)
 					: normalizeAssistantMessage(message, `m-${session.nextId + index}`, true),
 			);
+			const aligned = alignEntryIds(messages, action.editableUserMessages ?? []);
 			let diagnostics = state.diagnostics;
 			for (const message of action.messages) {
 				diagnostics = diagnosticsFromMessage({ ...state, diagnostics }, message);
@@ -355,7 +419,7 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 					[action.state.sessionId]: {
 						...session,
 						agentState: action.state,
-						messages,
+						messages: aligned,
 						tools: normalizeHistoricalTools(action.messages),
 						thinkingLevels: action.thinkingLevels,
 						interactions: [],
@@ -363,6 +427,7 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 						retry: null,
 						loaded: true,
 						error: null,
+						editing: null,
 						nextId: session.nextId + Math.max(messages.length, 1),
 					},
 				},
@@ -383,6 +448,24 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 						sessionUsage: action.usage,
 						...(action.thinkingLevels !== undefined ? { thinkingLevels: action.thinkingLevels } : {}),
 					},
+				},
+			};
+		}
+
+		case "session-editable-messages": {
+			const session = state.sessionStateById[action.sessionId];
+			if (!session) {
+				return state;
+			}
+			const aligned = alignEntryIds(session.messages, action.editableUserMessages);
+			if (aligned === session.messages) {
+				return state;
+			}
+			return {
+				...state,
+				sessionStateById: {
+					...state.sessionStateById,
+					[action.sessionId]: { ...session, messages: aligned },
 				},
 			};
 		}
@@ -412,6 +495,90 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 
 		case "session-catalog-failed":
 			return { ...state, sessionCatalogStatus: "ready" };
+
+		case "session-edit-start": {
+			const session = state.sessionStateById[action.sessionId];
+			if (!session) {
+				return state;
+			}
+			return {
+				...state,
+				sessionStateById: {
+					...state.sessionStateById,
+					[action.sessionId]: { ...session, editing: { entryId: action.entryId, text: action.text } },
+				},
+			};
+		}
+
+		case "session-edit-draft": {
+			const session = state.sessionStateById[action.sessionId];
+			if (!session?.editing) {
+				return state;
+			}
+			return {
+				...state,
+				sessionStateById: {
+					...state.sessionStateById,
+					[action.sessionId]: { ...session, editing: { ...session.editing, text: action.text } },
+				},
+			};
+		}
+
+		case "session-edit-cancel": {
+			const session = state.sessionStateById[action.sessionId];
+			if (!session?.editing) {
+				return state;
+			}
+			return {
+				...state,
+				sessionStateById: {
+					...state.sessionStateById,
+					[action.sessionId]: { ...session, editing: null },
+				},
+			};
+		}
+
+		case "session-edit-commit": {
+			const session = state.sessionStateById[action.sessionId];
+			if (!session?.editing || session.editing.entryId !== action.entryId) {
+				return state;
+			}
+			// Optimistic truncation: the edit branches the session tree before
+			// this message, so the edited message and everything after it leave
+			// the active context immediately. Tool records of removed turns go
+			// with them; the authoritative history arrives via the next snapshot.
+			const cutIndex = session.messages.findIndex(
+				(message) => message.role === "user" && message.entryId === action.entryId,
+			);
+			if (cutIndex === -1) {
+				return state;
+			}
+			const removedToolIds = new Set<string>();
+			for (const message of session.messages.slice(cutIndex)) {
+				if (message.role !== "assistant") continue;
+				for (const block of message.blocks) {
+					if (block.type === "toolCall") removedToolIds.add(block.id);
+				}
+			}
+			const tools = { ...session.tools };
+			for (const id of removedToolIds) {
+				delete tools[id];
+			}
+			return {
+				...state,
+				sessionStateById: {
+					...state.sessionStateById,
+					[action.sessionId]: {
+						...session,
+						messages: session.messages.slice(0, cutIndex),
+						tools,
+						editing: null,
+						retry: null,
+						error: null,
+					},
+				},
+			};
+		}
 
 		case "notify":
 			return {

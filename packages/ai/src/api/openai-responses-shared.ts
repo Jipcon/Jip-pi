@@ -117,6 +117,7 @@ export interface OpenAIResponsesStreamOptions {
 
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
+	supportsDeveloperRole?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
 	toolOptions?: ConvertResponsesToolsOptions;
@@ -171,8 +172,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	if (includeSystemPrompt && context.systemPrompt) {
-		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+		const role = model.reasoning && (options?.supportsDeveloperRole ?? false) ? "developer" : "system";
 		messages.push({
 			role,
 			content: sanitizeSurrogates(context.systemPrompt),

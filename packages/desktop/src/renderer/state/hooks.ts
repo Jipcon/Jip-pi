@@ -16,6 +16,7 @@ import type {
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
 	CustomProviderMatchedModel,
+	CustomProviderMatchRequest,
 	SessionStorageConfig,
 } from "../../shared/ipc.ts";
 import { workspacePathsEqual } from "../../shared/workspace-path.ts";
@@ -151,6 +152,11 @@ export function useAgentBridge(): void {
 					agentStateRevision += 1;
 				}
 				store.dispatch({ type: "routed-event", workspaceId, sessionId, event });
+				if (event.type === "agent_stopped") {
+					// The new turn's messages now have entry ids on disk: re-align so
+					// the just-completed user message becomes editable.
+					void refreshEditableUserMessages(workspaceId, sessionId);
+				}
 				if (
 					event.type === "turn_completed" ||
 					(event.type === "custom" && event.namespace === "pi" && event.name === "compaction_end")
@@ -267,7 +273,6 @@ export async function refreshAll(workspace: string): Promise<void> {
 	void refreshSessions(workspace);
 	void refreshModels().catch((error) => reportBridgeError("Failed to load model catalog", error));
 	void refreshProviderAuth().catch((error) => reportBridgeError("Failed to load provider auth status", error));
-	void workspace;
 }
 
 /** Load the host-level model catalog (credential-aware, zero-backend safe). */
@@ -280,7 +285,7 @@ export async function refreshModels(): Promise<void> {
  * Invalidate and refetch the host model catalog (after credential changes).
  * Returns true when the refresh produced a usable catalog.
  */
-export async function refreshModelCatalog(): Promise<boolean> {
+async function refreshModelCatalog(): Promise<boolean> {
 	await refreshModels();
 	return store.getSnapshot().models.length > 0;
 }
@@ -296,7 +301,7 @@ export async function reloadModelCatalog(): Promise<void> {
 	await Promise.all([refreshModels(), refreshProviderAuth()]);
 }
 
-export async function refreshSessionUsage(workspaceId: string, sessionId: string): Promise<void> {
+async function refreshSessionUsage(workspaceId: string, sessionId: string): Promise<void> {
 	const generation = ++usageRefreshGeneration;
 	try {
 		const usage = await window.agent.getSessionUsage(workspaceId, sessionId);
@@ -314,7 +319,22 @@ export async function refreshSessionUsage(workspaceId: string, sessionId: string
 	}
 }
 
-export async function refreshSessionCatalog(): Promise<void> {
+/**
+ * Re-fetch the editable user message list for a session and re-align entry ids
+ * onto the already-rendered messages. Used after `agent_stopped` so the
+ * just-completed turn's user message becomes editable without re-snapshotting
+ * the whole history.
+ */
+export async function refreshEditableUserMessages(workspaceId: string, sessionId: string): Promise<void> {
+	try {
+		const editable = await window.agent.listEditableUserMessages(workspaceId, sessionId);
+		store.dispatch({ type: "session-editable-messages", sessionId, editableUserMessages: editable });
+	} catch {
+		// Editability is best-effort; the edit button just stays hidden.
+	}
+}
+
+async function refreshSessionCatalog(): Promise<void> {
 	const generation = ++catalogRefreshGeneration;
 	try {
 		const [sessions, workspaces] = await Promise.all([
@@ -334,7 +354,7 @@ export async function refreshSessionCatalog(): Promise<void> {
 }
 
 /** Refresh the live session list for the active workspace. */
-export async function refreshSessions(workspaceId: string): Promise<void> {
+async function refreshSessions(workspaceId: string): Promise<void> {
 	const generation = ++sessionsRefreshGeneration;
 	try {
 		const sessions = await window.agent.listSessions(workspaceId);
@@ -356,8 +376,9 @@ export async function removeWorkspaceEntry(workspace: string): Promise<void> {
 	await refreshSessionCatalog();
 }
 
-/** Open a session (UI focus switch; never tears down other sessions). */
-export async function openSession(workspaceId: string, sessionId: string): Promise<void> {
+/**
+ * Open a session (UI focus switch; never tears down other sessions).
+ */ export async function openSession(workspaceId: string, sessionId: string): Promise<void> {
 	if (!workspaceId) {
 		throw new Error("This session does not record a workspace path");
 	}
@@ -375,22 +396,7 @@ export async function openSession(workspaceId: string, sessionId: string): Promi
 	}
 	store.dispatch({ type: "active-session", sessionId });
 	try {
-		const [snapshot, thinkingLevels] = await Promise.all([
-			window.agent.openSession(workspaceId, sessionId),
-			window.agent.listThinkingLevels(workspaceId, sessionId).catch(() => []),
-		]);
-		const revision = agentStateRevision;
-		store.dispatch({
-			type: "session-snapshot",
-			workspaceId,
-			state: snapshot.state,
-			messages: snapshot.messages,
-			usage: snapshot.usage,
-			thinkingLevels,
-		});
-		if (revision === agentStateRevision) {
-			void refreshSessionUsage(workspaceId, sessionId);
-		}
+		await loadSessionSnapshot(workspaceId, sessionId);
 	} catch (error) {
 		store.dispatch({
 			type: "session-open-failed",
@@ -401,6 +407,32 @@ export async function openSession(workspaceId: string, sessionId: string): Promi
 	}
 }
 
+/**
+ * Fetch a session's authoritative snapshot (state, history, thinking
+ * levels, editable entries) and apply it to the store. Shared by
+ * openSession and the edit-fork paths that must show authoritative history.
+ */
+async function loadSessionSnapshot(workspaceId: string, sessionId: string): Promise<void> {
+	const [sessionSnapshot, thinkingLevels, editableUserMessages] = await Promise.all([
+		window.agent.openSession(workspaceId, sessionId),
+		window.agent.listThinkingLevels(workspaceId, sessionId).catch(() => []),
+		window.agent.listEditableUserMessages(workspaceId, sessionId).catch(() => []),
+	]);
+	const revision = agentStateRevision;
+	store.dispatch({
+		type: "session-snapshot",
+		workspaceId,
+		state: sessionSnapshot.state,
+		messages: sessionSnapshot.messages,
+		usage: sessionSnapshot.usage,
+		thinkingLevels,
+		editableUserMessages,
+	});
+	if (revision === agentStateRevision) {
+		void refreshSessionUsage(workspaceId, sessionId);
+	}
+}
+
 /** Create a new session in the workspace and focus it. */
 export async function newSession(workspaceId: string): Promise<string> {
 	const session = await window.agent.createSession(workspaceId);
@@ -408,6 +440,58 @@ export async function newSession(workspaceId: string): Promise<string> {
 	void refreshSessions(workspaceId);
 	await openSession(workspaceId, session.id);
 	return session.id;
+}
+
+/**
+ * Open the inline editor for a past user message. Pure UI state: nothing is
+ * sent to the backend until resendEditedMessage commits the edit.
+ */
+export function startEditMessage(sessionId: string, entryId: string, text: string): void {
+	store.dispatch({ type: "session-edit-start", sessionId, entryId, text });
+}
+
+/** Update the inline editor's draft text. */
+export function updateEditDraft(sessionId: string, text: string): void {
+	store.dispatch({ type: "session-edit-draft", sessionId, text });
+}
+
+/** Close the inline editor without changing anything. */
+export function cancelEditMessage(sessionId: string): void {
+	store.dispatch({ type: "session-edit-cancel", sessionId });
+}
+
+/**
+ * Commit the inline edit: the session tree branches before the edited
+ * message (same session file) and the edited text is resent in place. The
+ * renderer truncates the history optimistically; on a backend rejection or
+ * an extension veto the authoritative snapshot restores the original view.
+ */
+export async function resendEditedMessage(
+	workspaceId: string,
+	sessionId: string,
+	entryId: string,
+	text: string,
+): Promise<void> {
+	store.dispatch({ type: "session-edit-commit", sessionId, entryId });
+	try {
+		const result = await window.agent.editUserMessage(workspaceId, sessionId, entryId, text);
+		if (result.status === "cancelled") {
+			store.dispatch({
+				type: "notify",
+				notification: { message: "The edit was cancelled by an extension", type: "info" },
+			});
+			await loadSessionSnapshot(workspaceId, sessionId).catch(() => {});
+			return;
+		}
+		// Sent: the optimistic truncation is the truth; the resent message and
+		// the new assistant turn arrive through the normal event stream, and
+		// editable entries realign after agent_stopped.
+	} catch (error) {
+		// The backend restored the previous leaf; put the original history
+		// back before surfacing the error.
+		await loadSessionSnapshot(workspaceId, sessionId).catch(() => {});
+		throw error;
+	}
 }
 
 export async function sendMessage(workspaceId: string, sessionId: string, message: UserMessage): Promise<void> {
@@ -542,7 +626,7 @@ export async function respondInteraction(
 }
 
 /** Refresh the read-only provider auth status list. */
-export async function refreshProviderAuth(): Promise<void> {
+async function refreshProviderAuth(): Promise<void> {
 	const statuses = await window.agent.listProviderAuthStatus();
 	store.dispatch({ type: "auth-status", statuses });
 }
@@ -592,8 +676,10 @@ export async function fetchCustomProviderModels(
 }
 
 /** Match fetched model ids against the local catalog for pre-fill metadata. */
-export async function matchCustomProviderModels(ids: string[]): Promise<CustomProviderMatchedModel[]> {
-	return window.agent.matchCustomProviderModels(ids);
+export async function matchCustomProviderModels(
+	request: CustomProviderMatchRequest,
+): Promise<CustomProviderMatchedModel[]> {
+	return window.agent.matchCustomProviderModels(request);
 }
 
 /**

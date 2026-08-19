@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fresh (message-less) session will materialize with — the settings
   `defaultThinkingLevel` (or the SDK built-in default) clamped to the model
   that `findInitialModel` would pick, or to an explicitly pending model.
+- Editable user messages & in-place editing: `SdkSessionBackend.editableUserMessages`
+  reports the live leaf path's user messages; `readEditableUserMessages`
+  reads them from a persisted JSONL file without a live backend (current
+  leaf only, so abandoned branches never appear);
+  `SdkSessionBackend.editAndResend` edits a past user message in place —
+  `AgentSession.navigateTree` moves the leaf before the edited message (an
+  in-file branch; the old continuation stays in the file but leaves the
+  active context) and the edited text is queued as a new prompt, with a
+  best-effort leaf restore when the prompt is rejected before anything was
+  appended. `session_before_tree` / `session_tree` extension events fire,
+  and extensions can cancel the edit.
 
 ### Notes
 

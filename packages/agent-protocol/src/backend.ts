@@ -21,7 +21,7 @@ import type { AgentEvent, InteractionKind, UserInteractionRequest } from "./even
 import type { AgentHostServices } from "./host-services.ts";
 import type { AgentMessage, UserMessage } from "./messages.ts";
 import type { ModelInfo, ModelRef } from "./models.ts";
-import type { AgentState, SessionInfo, SessionUsage } from "./sessions.ts";
+import type { AgentState, EditAndResendResult, SessionInfo, SessionUsage } from "./sessions.ts";
 
 /** Response payload for an answered interaction request. */
 export type InteractionResponse =
@@ -76,6 +76,15 @@ export interface AgentSessionBackend {
 
 	/** Answer a pending interaction request (select/confirm/input/editor). */
 	respondToInteraction(id: string, response: InteractionResponse): Promise<void>;
+
+	/**
+	 * Edit a past user message and resend it in place: the session tree
+	 * branches before the edited message (same session file), the edited
+	 * text is sent as a new prompt and everything after the branch point
+	 * leaves the active context. Optional: backends without tree support
+	 * report the `messageEdit` capability as false.
+	 */
+	editAndResend?(entryId: string, text: string): Promise<EditAndResendResult>;
 
 	/** Subscribe to this session's normalized event stream. Returns an unsubscribe function. */
 	subscribe(handler: (event: AgentEvent) => void): () => void;

@@ -279,6 +279,7 @@ function buildParams(
 ) {
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
+		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 	});
 
 	const params: ResponseCreateParamsStreaming = {

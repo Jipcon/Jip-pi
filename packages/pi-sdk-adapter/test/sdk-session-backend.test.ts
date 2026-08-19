@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentEvent, ModelRef } from "@earendil-works/pi-agent-protocol";
+import type { AgentEvent, AgentMessage, ModelRef } from "@earendil-works/pi-agent-protocol";
 import {
 	type FauxProviderHandle,
 	fauxAssistantMessage,
@@ -279,5 +279,99 @@ describe("SdkSessionBackend concurrency", () => {
 		bEvents.unsubscribe();
 		await backendA.stop();
 		await backendB.stop();
+	});
+
+	test("editableUserMessages reports the leaf path with timestamps matching getMessages", async () => {
+		const faux = registerFaux(runtime.runtime, "faux-editable");
+		faux.setResponses([fauxAssistantMessage("answer one"), fauxAssistantMessage("answer two")]);
+
+		const backend = createBackend(runtime);
+		activeBackends.push(backend);
+		await backend.start({ workspacePath: process.cwd(), model: modelOf(faux) });
+		const collector = collectEvents(backend);
+
+		await backend.sendMessage({ role: "user", content: "first question" });
+		await waitFor(() => collector.events.filter((event) => event.type === "agent_stopped").length >= 1);
+		await backend.sendMessage({ role: "user", content: "second question" });
+		await waitFor(() => collector.events.filter((event) => event.type === "agent_stopped").length >= 2);
+
+		const editable = backend.editableUserMessages();
+		expect(editable.map((entry) => entry.text)).toEqual(["first question", "second question"]);
+		expect(editable.every((entry) => entry.entryId.length > 0)).toBe(true);
+		// Timestamps are the embedded message's, so the renderer can align
+		// entry ids to rendered messages exactly.
+		const userTimestamps = (await backend.getMessages())
+			.filter((message) => message.role === "user")
+			.map((message) => message.timestamp);
+		expect(editable.map((entry) => entry.timestamp)).toEqual(userTimestamps);
+
+		collector.unsubscribe();
+		await backend.stop();
+	});
+
+	test("editAndResend branches before the edited message and resends in place", async () => {
+		const faux = registerFaux(runtime.runtime, "faux-edit-resend");
+		faux.setResponses([
+			fauxAssistantMessage("answer one"),
+			fauxAssistantMessage("answer two"),
+			fauxAssistantMessage("answer three"),
+		]);
+
+		const backend = createBackend(runtime);
+		activeBackends.push(backend);
+		await backend.start({ workspacePath: process.cwd(), model: modelOf(faux) });
+		const collector = collectEvents(backend);
+
+		await backend.sendMessage({ role: "user", content: "first question" });
+		await waitFor(() => collector.events.filter((event) => event.type === "agent_stopped").length >= 1);
+		await backend.sendMessage({ role: "user", content: "second question" });
+		await waitFor(() => collector.events.filter((event) => event.type === "agent_stopped").length >= 2);
+
+		// Edit the second question in place: the tree branches before it, the
+		// edited text is resent, and the old "answer two" leaves the leaf path.
+		const editable = backend.editableUserMessages();
+		const result = await backend.editAndResend(editable[1].entryId, "second question (edited)");
+		expect(result).toEqual({ status: "sent" });
+		await waitFor(() => collector.events.filter((event) => event.type === "agent_stopped").length >= 3);
+
+		const messages = await backend.getMessages();
+		const plainText = (message: AgentMessage): string =>
+			typeof message.content === "string"
+				? message.content
+				: message.content
+						.filter((block) => block.type === "text")
+						.map((block) => (block.type === "text" ? block.text : ""))
+						.join("");
+		expect(messages.filter((message) => message.role === "user").map(plainText)).toEqual([
+			"first question",
+			"second question (edited)",
+		]);
+		expect(messages.filter((message) => message.role === "assistant").map(plainText)).toEqual([
+			"answer one",
+			"answer three",
+		]);
+
+		collector.unsubscribe();
+		await backend.stop();
+	});
+
+	test("editAndResend rejects unknown entries and while streaming", async () => {
+		const faux = registerFaux(runtime.runtime, "faux-edit-guard", 10);
+		faux.setResponses([fauxAssistantMessage("long answer ".repeat(200))]);
+
+		const backend = createBackend(runtime);
+		activeBackends.push(backend);
+		await backend.start({ workspacePath: process.cwd(), model: modelOf(faux) });
+
+		await expect(backend.editAndResend("missing", "text")).rejects.toThrow("Entry missing not found");
+
+		await backend.sendMessage({ role: "user", content: "start" });
+		await waitFor(() => backend.isStreaming);
+		await expect(backend.editAndResend("whatever", "text")).rejects.toThrow(
+			"Wait for the current response to finish before editing a message",
+		);
+		await backend.abort();
+		await waitFor(() => !backend.isStreaming);
+		await backend.stop();
 	});
 });

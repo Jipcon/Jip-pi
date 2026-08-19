@@ -64,9 +64,17 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
+function detectOpenAIResponsesSupportsDeveloperRole(model: Model<"openai-responses">): boolean {
+	if (model.compat?.supportsDeveloperRole !== undefined) return model.compat.supportsDeveloperRole;
+	// Only OpenAI's own API supports the developer role by default.
+	const baseUrl = model.baseUrl;
+	const isOpenAI = baseUrl.includes("api.openai.com");
+	return isOpenAI;
+}
+
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
-		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		supportsDeveloperRole: detectOpenAIResponsesSupportsDeveloperRole(model),
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
@@ -267,6 +275,7 @@ function buildParams(
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
+		supportsDeveloperRole: compat.supportsDeveloperRole,
 		deferredTools: toolPlacement.deferred,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,

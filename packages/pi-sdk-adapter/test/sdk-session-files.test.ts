@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-protocol";
+import type { AgentMessage, EditableUserMessage } from "@earendil-works/pi-agent-protocol";
 import {
 	type Api,
 	clampThinkingLevel,
@@ -11,11 +11,17 @@ import {
 	InMemoryCredentialStore,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime, type SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, describe, expect, test } from "vitest";
 import { loadSdk } from "../src/sdk-loader.ts";
 import { normalizeSdkMessages } from "../src/sdk-normalizer.ts";
-import { createSessionFile, readSessionHistory, resolveFreshSessionDefaults } from "../src/sdk-session-files.ts";
+import {
+	createSessionFile,
+	extractEditableUserMessages,
+	readEditableUserMessages,
+	readSessionHistory,
+	resolveFreshSessionDefaults,
+} from "../src/sdk-session-files.ts";
 
 const tempDir = mkdtempSync(join(tmpdir(), "pi-sdk-files-"));
 const workspace = join(tempDir, "workspace");
@@ -187,5 +193,148 @@ describe("resolveFreshSessionDefaults", () => {
 		});
 		expect(defaults.model?.id).toBe("plain");
 		expect(defaults.thinkingLevel).toBe("off");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Editable user messages & forking
+// ---------------------------------------------------------------------------
+
+function userEntry(id: string, parentId: string | null, text: string, timestamp: number): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: new Date(timestamp).toISOString(),
+		message: { role: "user", content: text, timestamp },
+	};
+}
+
+function assistantEntry(id: string, parentId: string | null, text: string, timestamp: number): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: new Date(timestamp).toISOString(),
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			timestamp,
+			api: "anthropic-messages",
+			provider: "faux",
+			model: "faux-1",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+		},
+	};
+}
+
+function imageUserEntry(id: string, parentId: string | null, text: string, timestamp: number): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: new Date(timestamp).toISOString(),
+		message: {
+			role: "user",
+			content: [
+				{ type: "text", text },
+				{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+			],
+			timestamp,
+		},
+	};
+}
+
+function imageOnlyUserEntry(id: string, parentId: string | null, timestamp: number): SessionEntry {
+	return {
+		type: "message",
+		id,
+		parentId,
+		timestamp: new Date(timestamp).toISOString(),
+		message: {
+			role: "user",
+			content: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+			timestamp,
+		},
+	};
+}
+
+/** Write a session JSONL fixture (header + entries) and return its path. */
+function writeSessionFixture(id: string, entries: SessionEntry[]): string {
+	const file = join(sessionDir, `fixture-${id}.jsonl`);
+	const header = {
+		type: "session",
+		version: 3,
+		id,
+		timestamp: new Date().toISOString(),
+		cwd: workspace,
+	};
+	writeFileSync(file, `${[header, ...entries].map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+	return file;
+}
+
+describe("extractEditableUserMessages", () => {
+	test("keeps only text-bearing user messages and maps entry ids", () => {
+		const branch: SessionEntry[] = [
+			userEntry("u1", null, "first", 100),
+			assistantEntry("a1", "u1", "answer one", 200),
+			imageOnlyUserEntry("u2", "a1", 300),
+			imageUserEntry("u3", "u2", "look at this", 400),
+			userEntry("u4", "u3", "", 500),
+		];
+		const editable = extractEditableUserMessages(branch);
+		expect(editable).toEqual([
+			{ entryId: "u1", text: "first", timestamp: 100 },
+			{ entryId: "u3", text: "look at this", timestamp: 400 },
+		]);
+	});
+
+	test("joins multiple text blocks and drops a timestamp-less message gracefully", () => {
+		const entry: SessionEntry = {
+			type: "message",
+			id: "u-multi",
+			parentId: null,
+			timestamp: new Date(1).toISOString(),
+			message: {
+				role: "user",
+				content: [
+					{ type: "text", text: "part one " },
+					{ type: "text", text: "part two" },
+				],
+				timestamp: 1,
+			},
+		};
+		const editable = extractEditableUserMessages([entry]);
+		expect(editable).toEqual([{ entryId: "u-multi", text: "part one part two", timestamp: 1 }]);
+	});
+});
+
+describe("readEditableUserMessages", () => {
+	test("reports only the current leaf path, never abandoned branches", async () => {
+		// Two branches: u1 → a1 → u2 → a2 and u1 → a1 → u3. The last entry
+		// (u3) is the leaf, so only its path is editable.
+		const file = writeSessionFixture("branchy", [
+			userEntry("u1", null, "first", 100),
+			assistantEntry("a1", "u1", "answer one", 200),
+			userEntry("u2", "a1", "second", 300),
+			assistantEntry("a2", "u2", "answer two", 400),
+			userEntry("u3", "a1", "alternative", 500),
+		]);
+		const editable = await readEditableUserMessages(file);
+		expect(editable.map((entry: EditableUserMessage) => entry.entryId)).toEqual(["u1", "u3"]);
+		expect(editable[1].text).toBe("alternative");
+	});
+
+	test("returns an empty list for a header-only file", async () => {
+		const file = writeSessionFixture("empty", []);
+		expect(await readEditableUserMessages(file)).toEqual([]);
 	});
 });

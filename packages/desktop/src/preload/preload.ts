@@ -15,6 +15,8 @@ import type {
 	AgentMessage,
 	AgentState,
 	AuthPromptResponse,
+	EditAndResendResult,
+	EditableUserMessage,
 	InteractionResponse,
 	ModelInfo,
 	ModelRef,
@@ -31,6 +33,7 @@ import {
 	type CustomProviderFetchedModel,
 	type CustomProviderFetchRequest,
 	type CustomProviderMatchedModel,
+	type CustomProviderMatchRequest,
 	IPC,
 	type RoutedAgentEvent,
 	type SessionSnapshot,
@@ -100,14 +103,23 @@ const api = {
 		invokeCommand<void>(IPC.customProvidersDelete, providerId),
 	fetchCustomProviderModels: (request: CustomProviderFetchRequest): Promise<CustomProviderFetchedModel[]> =>
 		invokeCommand<CustomProviderFetchedModel[]>(IPC.customProvidersFetchModels, request),
-	matchCustomProviderModels: (ids: string[]): Promise<CustomProviderMatchedModel[]> =>
-		invokeCommand<CustomProviderMatchedModel[]>(IPC.customProvidersMatchModels, ids),
+	matchCustomProviderModels: (request: CustomProviderMatchRequest): Promise<CustomProviderMatchedModel[]> =>
+		invokeCommand<CustomProviderMatchedModel[]>(IPC.customProvidersMatchModels, request),
 	setModel: (workspaceId: string, sessionId: string, model: ModelRef): Promise<ModelInfo | null> =>
 		invokeCommand<ModelInfo | null>(IPC.agentSetModel, workspaceId, sessionId, model),
 	listThinkingLevels: (workspaceId: string, sessionId: string): Promise<string[]> =>
 		invokeCommand<string[]>(IPC.agentListThinkingLevels, workspaceId, sessionId),
 	setThinkingLevel: (workspaceId: string, sessionId: string, level: string): Promise<void> =>
 		invokeCommand<void>(IPC.agentSetThinkingLevel, workspaceId, sessionId, level),
+	listEditableUserMessages: (workspaceId: string, sessionId: string): Promise<EditableUserMessage[]> =>
+		invokeCommand<EditableUserMessage[]>(IPC.agentListEditableUserMessages, workspaceId, sessionId),
+	editUserMessage: (
+		workspaceId: string,
+		sessionId: string,
+		entryId: string,
+		text: string,
+	): Promise<EditAndResendResult> =>
+		invokeCommand<EditAndResendResult>(IPC.agentEditUserMessage, workspaceId, sessionId, entryId, text),
 	listProviderAuthStatus: (): Promise<ProviderAuthStatus[]> => invokeCommand<ProviderAuthStatus[]>(IPC.authListStatus),
 	setApiKey: (provider: string, apiKey: string): Promise<void> =>
 		invokeCommand<void>(IPC.authSetApiKey, provider, apiKey),

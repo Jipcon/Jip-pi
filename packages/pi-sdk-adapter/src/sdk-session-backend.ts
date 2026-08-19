@@ -14,6 +14,8 @@ import type {
 	AgentMessage,
 	AgentSessionBackend,
 	AgentState,
+	EditAndResendResult,
+	EditableUserMessage,
 	InteractionResponse,
 	MessageBlock,
 	ModelInfo,
@@ -38,6 +40,7 @@ import {
 	normalizeSdkState,
 	normalizeSdkUsage,
 } from "./sdk-normalizer.ts";
+import { extractEditableUserMessages } from "./sdk-session-files.ts";
 
 export interface SdkSessionBackendOptions {
 	/** Shared model/auth runtime (owned by the host services); may be a promise. */
@@ -180,6 +183,19 @@ export class SdkSessionBackend implements AgentSessionBackend {
 		// Mirror the RPC mode prompt contract: steering while streaming;
 		// preflight acceptance decides whether the host sees the prompt as
 		// accepted. The promise resolves once the prompt is queued.
+		await this.promptRpc(session, text, images);
+	}
+
+	/**
+	 * Queue a prompt mirroring the RPC mode prompt contract: steering while
+	 * streaming; preflight acceptance decides whether the host sees the
+	 * prompt as accepted. The promise resolves once the prompt is queued.
+	 */
+	private async promptRpc(
+		session: AgentSession,
+		text: string,
+		images?: Array<{ type: "image"; data: string; mimeType: string }>,
+	): Promise<void> {
 		await new Promise<void>((resolve, reject) => {
 			let preflightSucceeded = false;
 			void session
@@ -291,6 +307,53 @@ export class SdkSessionBackend implements AgentSessionBackend {
 		session.setSessionName(sanitizedName);
 	}
 
+	/**
+	 * Editable user messages on the current leaf path. Sourced from the
+	 * live `SessionManager.getBranch()`, so the embedded `AgentMessage`
+	 * objects are the same ones `getMessages()` reports: timestamps match
+	 * exactly and the renderer can align `entryId`s to rendered messages.
+	 */
+	editableUserMessages(): EditableUserMessage[] {
+		const manager = this.requireSessionManager();
+		return extractEditableUserMessages(manager.getBranch());
+	}
+
+	/**
+	 * Edit a past user message and resend it in place: `navigateTree` moves
+	 * the session's leaf before the edited message (an in-file branch — the
+	 * old continuation stays in the file but leaves the active context),
+	 * then the edited text is queued as a new prompt. Cancelling only
+	 * happens through a `session_before_tree` extension veto (or an aborted
+	 * summarization); nothing is mutated in that case. When the prompt is
+	 * rejected before anything was appended, the previous leaf is restored
+	 * so the original branch stays visible.
+	 */
+	async editAndResend(entryId: string, text: string): Promise<EditAndResendResult> {
+		const session = this.requireSession();
+		if (session.isStreaming) {
+			throw new Error("Wait for the current response to finish before editing a message");
+		}
+		const oldLeafId = this.requireSessionManager().getLeafId();
+		const navigation = await session.navigateTree(entryId);
+		if (navigation.cancelled) {
+			return { status: "cancelled" };
+		}
+		try {
+			await this.promptRpc(session, text);
+		} catch (error) {
+			// Nothing was appended (the prompt was rejected before queueing):
+			// restore the previous leaf so the original branch stays active. A
+			// trailing user-message leaf cannot be restored exactly through
+			// navigateTree (its user-target semantics re-parent by design), but
+			// the entry stays in the file either way.
+			if (oldLeafId !== null) {
+				await session.navigateTree(oldLeafId).catch(() => {});
+			}
+			throw error instanceof Error ? error : new Error(String(error));
+		}
+		return { status: "sent" };
+	}
+
 	// -----------------------------------------------------------------------
 	// Internals
 	// -----------------------------------------------------------------------
@@ -300,6 +363,13 @@ export class SdkSessionBackend implements AgentSessionBackend {
 			throw new Error("Backend not started");
 		}
 		return this.session;
+	}
+
+	private requireSessionManager(): SessionManager {
+		if (!this.sessionManager) {
+			throw new Error("Backend not started");
+		}
+		return this.sessionManager;
 	}
 
 	private emit(event: AgentEvent): void {

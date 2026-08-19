@@ -146,6 +146,42 @@ than permanent removal. Deletion is confirmed through an in-app dialog, not
 input/focus state wedged after closing (symptom: menus stop opening, the
 composer keeps focus but accepts no typing).
 
+### Editing a past user message (in-file branch)
+
+Hovering a past user message reveals an edit action (pencil). Clicking it
+replaces the bubble with an **inline editor** prefilled with the message's
+text — nothing is sent to the backend at this point. **Cancel** (button or
+`Esc`) restores the original conversation byte-for-byte: cancelling is pure
+frontend state. **Send** (button or `Enter`) commits the edit in the **same
+session file**: the session tree branches *before* the edited message (the
+SDK's `AgentSession.navigateTree`), the edited text is resent as a new
+prompt, and everything after the branch point leaves the active context.
+
+Guards and semantics:
+
+- The action is capability-gated (`messageEdit`); the legacy RPC backend
+  reports it as unavailable and the GUI hides the button.
+- The action is hidden while the session is streaming, and for messages
+  without a session entry id yet (a turn that has not completed). While the
+  inline editor is open the composer is disabled — a parallel prompt would
+  be truncated by the edit otherwise.
+- The renderer truncates the history optimistically on Send; if the backend
+  rejects the edit or an extension vetoes it (`session_before_tree`), the
+  previous leaf is restored and the authoritative snapshot puts the original
+  conversation back.
+- Editing runs on the live session: a not-yet-materialized session is
+  materialized on demand (an explicit user action — history browsing never
+  materializes). An unpersisted session (no JSONL file) rejects the edit
+  with an explicit error — wait for the first assistant response.
+- The old continuation stays in the session file as an abandoned branch.
+  There is no branch-switching UI; after Send it is not reachable from the
+  GUI (deleting the session removes it with the file).
+- `session_before_tree` / `session_tree` extension events fire on Send, and
+  extensions can cancel the edit.
+
+v1 limits: only text is resent (image attachments are shown read-only and
+not carried back).
+
 ## Workspace switching and the warm backend pool
 
 `BackendManager` keeps the two most recently used workspaces resident instead

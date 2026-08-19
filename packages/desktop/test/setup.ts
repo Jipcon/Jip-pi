@@ -64,6 +64,10 @@ const mockAgent: AgentApi = {
 	setModel: vi.fn(async () => null),
 	listThinkingLevels: vi.fn(async () => ["off", "medium", "high"]),
 	setThinkingLevel: vi.fn(async () => {}),
+	listEditableUserMessages: vi.fn(async () => []),
+	editUserMessage: vi.fn(async (_workspaceId: string, _sessionId: string, _entryId: string, _text: string) => ({
+		status: "cancelled" as const,
+	})),
 	listProviderAuthStatus: vi.fn(async () => []),
 	setApiKey: vi.fn(async () => {}),
 	removeCredential: vi.fn(async () => {}),
@@ -137,6 +141,12 @@ export function resetMockAgent(): void {
 	vi.mocked(mockAgent.setModel).mockClear().mockResolvedValue(null);
 	vi.mocked(mockAgent.listThinkingLevels).mockClear().mockResolvedValue(["off", "medium", "high"]);
 	vi.mocked(mockAgent.setThinkingLevel).mockClear().mockResolvedValue();
+	vi.mocked(mockAgent.listEditableUserMessages).mockClear().mockResolvedValue([]);
+	vi.mocked(mockAgent.editUserMessage)
+		.mockClear()
+		.mockImplementation(async (_workspaceId: string, _sessionId: string, _entryId: string, _text: string) => ({
+			status: "cancelled" as const,
+		}));
 	vi.mocked(mockAgent.listProviderAuthStatus).mockClear().mockResolvedValue([]);
 	vi.mocked(mockAgent.setApiKey).mockClear().mockResolvedValue();
 	vi.mocked(mockAgent.removeCredential).mockClear().mockResolvedValue();

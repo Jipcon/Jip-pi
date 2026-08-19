@@ -13,8 +13,8 @@
  */
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { RetryState, UiMessage } from "../state/store.ts";
 import type { SessionUsage, ToolCallInfo } from "@earendil-works/pi-agent-protocol";
+import type { RetryState, UiMessage } from "../state/store.ts";
 import { Composer } from "./Composer.tsx";
 import { ConversationTurn, groupMessagesIntoTurns, type ConversationTurnModel } from "./ConversationTurn.tsx";
 import { Icon } from "./Icon.tsx";
@@ -46,7 +46,12 @@ function conversationTurnEqual(
 	if (prev.streaming !== next.streaming) return false;
 	if (prev.showThinking !== next.showThinking) return false;
 	if (prev.showToolDetails !== next.showToolDetails) return false;
-	for (const message of prev.turn.assistantMessages) {
+	if (prev.canEdit !== next.canEdit) return false;
+	if (prev.onEdit !== next.onEdit) return false;
+	if (prev.editing !== next.editing) return false;
+	if (prev.onEditDraft !== next.onEditDraft) return false;
+	if (prev.onEditSend !== next.onEditSend) return false;
+	if (prev.onEditCancel !== next.onEditCancel) return false;	for (const message of prev.turn.assistantMessages) {
 		for (const block of message.blocks) {
 			if (block.type === "toolCall" && prev.tools[block.id] !== next.tools[block.id]) {
 				return false;
@@ -77,6 +82,12 @@ export function ChatView({
 	supportsImages = false,
 	retry = null,
 	sessionKey = "",
+	canEdit = false,
+	onEditMessage,
+	editing = null,
+	onEditDraft,
+	onEditSend,
+	onEditCancel,
 }: {
 	/** Workspace the session belongs to (session-routed operations). */
 	workspaceId: string;
@@ -91,6 +102,18 @@ export function ChatView({
 	retry?: RetryState | null;
 	/** Current session id; changes reset the render window and turn cache. */
 	sessionKey?: string;
+	/** Whether the backend supports editing past user messages (capability). */
+	canEdit?: boolean;
+	/** Request to edit a user message (open the inline editor). */
+	onEditMessage?: (message: UiMessage) => void;
+	/** Inline editor state for the active session, if an edit is in progress. */
+	editing?: { entryId: string; text: string } | null;
+	/** Update the inline editor's draft. */
+	onEditDraft?: (text: string) => void;
+	/** Commit the inline edit (branch before the message and resend). */
+	onEditSend?: () => void;
+	/** Abandon the inline edit. */
+	onEditCancel?: () => void;
 }): React.JSX.Element {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
@@ -230,6 +253,12 @@ export function ChatView({
 								streaming={streaming && index === turns.length - 1}
 								showThinking={showThinking}
 								showToolDetails={showToolDetails}
+								canEdit={canEdit && !streaming}
+								onEdit={onEditMessage}
+								editing={editing}
+								onEditDraft={onEditDraft}
+								onEditSend={onEditSend}
+								onEditCancel={onEditCancel}
 							/>
 						))}
 					</div>
@@ -249,7 +278,9 @@ export function ChatView({
 				workspaceId={workspaceId}
 				sessionId={sessionKey}
 				streaming={streaming}
-				disabled={disabled}
+				// An open inline edit owns the turn boundary: the composer is
+				// disabled so a parallel prompt cannot be truncated by the edit.
+				disabled={disabled || editing !== null}
 				supportsImages={supportsImages}
 			/>
 		</main>

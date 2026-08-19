@@ -120,12 +120,30 @@ export function ConversationTurn({
 	streaming,
 	showThinking,
 	showToolDetails,
+	canEdit = false,
+	onEdit,
+	editing = null,
+	onEditDraft,
+	onEditSend,
+	onEditCancel,
 }: {
 	turn: ConversationTurnModel;
 	tools: Record<string, ToolCallInfo>;
 	streaming: boolean;
 	showThinking: boolean;
 	showToolDetails: boolean;
+	/** Whether editing the turn's user message is supported and allowed now. */
+	canEdit?: boolean;
+	/** Request to edit the turn's user message (open the inline editor). */
+	onEdit?: (message: UiMessage) => void;
+	/** Inline editor state when it targets this turn's user message. */
+	editing?: { entryId: string; text: string } | null;
+	/** Update the inline editor's draft. */
+	onEditDraft?: (text: string) => void;
+	/** Commit the edit. */
+	onEditSend?: () => void;
+	/** Abandon the edit. */
+	onEditCancel?: () => void;
 }): React.JSX.Element {
 	const { processMessages, finalMessage } = splitAssistantTurn(turn.assistantMessages);
 	const failedTurn = turnFailure(turn.assistantMessages);
@@ -187,7 +205,18 @@ export function ConversationTurn({
 				: undefined;
 	return (
 		<div className="conversation-turn" data-testid="conversation-turn">
-			{turn.user && <MessageItem message={turn.user} tools={tools} />}
+			{turn.user && (
+				<MessageItem
+					message={turn.user}
+					tools={tools}
+					canEdit={canEdit}
+					onEdit={onEdit}
+					editing={editing !== null && turn.user.entryId === editing.entryId ? editing : null}
+					onEditDraft={onEditDraft}
+					onEditSend={onEditSend}
+					onEditCancel={onEditCancel}
+				/>
+			)}
 			{(hasAssistantContent || showWorkingStatus) && (
 				<div className="message-row message-row-assistant" data-testid="assistant-message">
 					<div className="assistant-meta">

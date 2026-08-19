@@ -30,6 +30,7 @@ import { Sidebar } from "./components/Sidebar.tsx";
 import { TopBar } from "./components/TopBar.tsx";
 import { WorkspacePicker } from "./components/WorkspacePicker.tsx";
 import {
+	cancelEditMessage,
 	cancelOAuthLogin,
 	deleteCustomProvider,
 	fetchCustomProviderModels,
@@ -37,19 +38,22 @@ import {
 	loginProviderOAuth,
 	matchCustomProviderModels,
 	pickWorkspaceAndStart,
-	removeProviderCredential,
 	reloadModelCatalog,
+	removeProviderCredential,
+	resendEditedMessage,
 	respondToAuthPrompt,
 	saveCustomProvider,
 	saveProviderApiKey,
 	setSessionStorage as applySessionStorage,
+	startEditMessage,
 	startWorkspace,
 	store,
+	updateEditDraft,
 	useAgentBridge,
 	useAppState,
 } from "./state/hooks.ts";
 import { redactCredentialText } from "./state/redact.ts";
-import { sessionIndicator } from "./state/store.ts";
+import { sessionIndicator, type UiMessage } from "./state/store.ts";
 import { DEFAULT_SESSION_STORAGE, type SessionStorageConfig } from "../shared/ipc.ts";
 
 const SHOW_THINKING_KEY = "pi-desktop.show-thinking";
@@ -224,6 +228,58 @@ export function App(): React.JSX.Element {
 		}
 	}, []);
 
+	// Message editing is capability-gated; ChatView additionally hides the
+	// button while the session is streaming or the message has no entry id.
+	const canEditMessages = state.status.handshake?.capabilities?.messageEdit === true;
+
+	const onEditMessage = useCallback(
+		(message: UiMessage) => {
+			if (message.entryId === undefined || activeSessionId === null) {
+				return;
+			}
+			// The inline editor opens with the message's own text blocks (v1: text
+			// only — images are shown read-only and not resent).
+			const text = message.blocks
+				.filter((block) => block.type === "text")
+				.map((block) => (block.type === "text" ? block.text : ""))
+				.join("");
+			startEditMessage(activeSessionId, message.entryId, text);
+		},
+		[activeSessionId],
+	);
+
+	const onEditDraft = useCallback(
+		(text: string) => {
+			if (activeSessionId !== null) {
+				updateEditDraft(activeSessionId, text);
+			}
+		},
+		[activeSessionId],
+	);
+
+	const onEditCancel = useCallback(() => {
+		if (activeSessionId !== null) {
+			cancelEditMessage(activeSessionId);
+		}
+	}, [activeSessionId]);
+
+	const onEditSend = useCallback(() => {
+		const editing = activeSession?.editing;
+		const workspaceId = activeSession?.workspaceId ?? workspace ?? "";
+		if (!editing || activeSessionId === null || !workspaceId) {
+			return;
+		}
+		void resendEditedMessage(workspaceId, activeSessionId, editing.entryId, editing.text).catch((error) => {
+			store.dispatch({
+				type: "notify",
+				notification: {
+					message: `Failed to edit message: ${error instanceof Error ? error.message : String(error)}`,
+					type: "error",
+				},
+			});
+		});
+	}, [activeSession?.editing, activeSession?.workspaceId, activeSessionId, workspace]);
+
 	const noWorkspace =
 		state.status.phase === "no-workspace" ||
 		(!running && !state.status.workspace && (activeSession === undefined || activeSession.messages.length === 0));
@@ -290,6 +346,12 @@ export function App(): React.JSX.Element {
 					supportsImages={currentModel?.input?.includes("image") === true}
 					retry={activeSession?.retry ?? null}
 					sessionKey={activeSessionId ?? ""}
+					canEdit={canEditMessages}
+					onEditMessage={onEditMessage}
+					editing={activeSession?.editing ?? null}
+					onEditDraft={onEditDraft}
+					onEditSend={onEditSend}
+					onEditCancel={onEditCancel}
 				/>
 			)}
 			{activeInteraction && activeSession && (

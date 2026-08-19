@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { CustomProviderConfig, CustomProviderMatchedModel } from "../src/shared/ipc.ts";
 import * as hooks from "../src/renderer/state/hooks.ts";
 import type { UiMessage } from "../src/renderer/state/store.ts";
 
@@ -269,6 +270,125 @@ $$\frac{1}{2}$$
 		);
 		expect(screen.getByAltText("sample.png").getAttribute("src")).toBe("data:image/png;base64,aGVsbG8=");
 		expect(screen.getByText("Inspect this")).toBeTruthy();
+	});
+
+	test("hides the edit button without an entry id, capability or handler", () => {
+		const message: UiMessage = {
+			id: "u-edit",
+			role: "user",
+			blocks: [{ type: "text", text: "edit me" }],
+			complete: true,
+		};
+		const { rerender } = render(<MessageItem message={message} tools={{}} onEdit={() => {}} />);
+		expect(screen.queryByTestId("edit-user-message")).toBeNull();
+
+		rerender(<MessageItem message={message} tools={{}} canEdit onEdit={() => {}} />);
+		expect(screen.queryByTestId("edit-user-message")).toBeNull();
+
+		const withEntry: UiMessage = { ...message, entryId: "e1" };
+		rerender(<MessageItem message={withEntry} tools={{}} canEdit />);
+		expect(screen.queryByTestId("edit-user-message")).toBeNull();
+	});
+
+	test("shows the edit button for an editable message and reports the message", () => {
+		const message: UiMessage = {
+			id: "u-edit",
+			role: "user",
+			blocks: [{ type: "text", text: "edit me" }],
+			complete: true,
+			entryId: "e1",
+		};
+		const onEdit = vi.fn();
+		render(<MessageItem message={message} tools={{}} canEdit onEdit={onEdit} />);
+		fireEvent.click(screen.getByTestId("edit-user-message"));
+		expect(onEdit).toHaveBeenCalledWith(message);
+	});
+
+	test("renders the inline editor with the original text focused", () => {
+		const message: UiMessage = {
+			id: "u-edit",
+			role: "user",
+			blocks: [{ type: "text", text: "edit me" }],
+			complete: true,
+			entryId: "e1",
+		};
+		render(
+			<MessageItem
+				message={message}
+				tools={{}}
+				canEdit
+				editing={{ text: "edit me" }}
+				onEditDraft={vi.fn()}
+				onEditSend={vi.fn()}
+				onEditCancel={vi.fn()}
+			/>,
+		);
+		const input = screen.getByTestId("user-message-editor-input") as HTMLTextAreaElement;
+		expect(input.value).toBe("edit me");
+		expect(document.activeElement).toBe(input);
+		expect(screen.getByTestId("edit-cancel-button")).toBeTruthy();
+		expect((screen.getByTestId("edit-send-button") as HTMLButtonElement).disabled).toBe(false);
+	});
+
+	test("editor drafts, sends on Enter and cancels on Escape", () => {
+		const message: UiMessage = {
+			id: "u-edit",
+			role: "user",
+			blocks: [{ type: "text", text: "edit me" }],
+			complete: true,
+			entryId: "e1",
+		};
+		const onEditDraft = vi.fn();
+		const onEditSend = vi.fn();
+		const onEditCancel = vi.fn();
+		render(
+			<MessageItem
+				message={message}
+				tools={{}}
+				canEdit
+				editing={{ text: "edit me" }}
+				onEditDraft={onEditDraft}
+				onEditSend={onEditSend}
+				onEditCancel={onEditCancel}
+			/>,
+		);
+		const input = screen.getByTestId("user-message-editor-input");
+		fireEvent.change(input, { target: { value: "edited text" } });
+		expect(onEditDraft).toHaveBeenCalledWith("edited text");
+
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(onEditSend).toHaveBeenCalledTimes(1);
+		// Shift+Enter inserts a newline instead of sending.
+		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+		expect(onEditSend).toHaveBeenCalledTimes(1);
+
+		fireEvent.keyDown(input, { key: "Escape" });
+		expect(onEditCancel).toHaveBeenCalledTimes(1);
+	});
+
+	test("an image-bearing message keeps the editor but hints text-only resend", () => {
+		const message: UiMessage = {
+			id: "u-img",
+			role: "user",
+			blocks: [
+				{ type: "image", data: "aGVsbG8=", mimeType: "image/png", name: "shot.png" },
+				{ type: "text", text: "look at this" },
+			],
+			complete: true,
+			entryId: "e1",
+		};
+		render(
+			<MessageItem
+				message={message}
+				tools={{}}
+				canEdit
+				editing={{ text: "look at this" }}
+				onEditDraft={vi.fn()}
+				onEditSend={vi.fn()}
+				onEditCancel={vi.fn()}
+			/>,
+		);
+		expect(screen.getByTestId("user-message-editor").textContent).toContain("images are not resent");
 	});
 });
 
@@ -907,6 +1027,107 @@ describe("SettingsPanel", () => {
 });
 
 describe("ChatView conversation turns", () => {
+	test("shows the edit button through turns and hides it while streaming", () => {
+		const userMessage: UiMessage = {
+			id: "u-editable",
+			role: "user",
+			blocks: [{ type: "text", text: "editable prompt" }],
+			complete: true,
+			entryId: "e1",
+		};
+		const assistantMessage: UiMessage = {
+			id: "a-1",
+			role: "assistant",
+			blocks: [{ type: "text", text: "answer" }],
+			complete: true,
+		};
+		const baseProps = {
+			workspaceId: "D:\\pi",
+			messages: [userMessage, assistantMessage],
+			tools: {},
+			showThinking: false,
+			showToolDetails: false,
+			disabled: false,
+			sessionKey: "session-1",
+		};
+		const onEditMessage = vi.fn();
+
+		const { rerender } = render(<ChatView {...baseProps} streaming={false} canEdit onEditMessage={onEditMessage} />);
+		fireEvent.click(screen.getByTestId("edit-user-message"));
+		expect(onEditMessage).toHaveBeenCalledWith(userMessage);
+
+		// Streaming disables the entry point for every turn.
+		rerender(<ChatView {...baseProps} streaming canEdit onEditMessage={onEditMessage} />);
+		expect(screen.queryByTestId("edit-user-message")).toBeNull();
+
+		// So does the capability flag.
+		rerender(<ChatView {...baseProps} streaming={false} canEdit={false} onEditMessage={onEditMessage} />);
+		expect(screen.queryByTestId("edit-user-message")).toBeNull();
+	});
+
+	test("routes the inline editor to the matching turn and disables the composer while editing", () => {
+		const firstUser: UiMessage = {
+			id: "u-1",
+			role: "user",
+			blocks: [{ type: "text", text: "first" }],
+			complete: true,
+			entryId: "e1",
+		};
+		const secondUser: UiMessage = {
+			id: "u-2",
+			role: "user",
+			blocks: [{ type: "text", text: "second" }],
+			complete: true,
+			entryId: "e2",
+		};
+		const assistant: UiMessage = {
+			id: "a-1",
+			role: "assistant",
+			blocks: [{ type: "text", text: "answer" }],
+			complete: true,
+		};
+		const baseProps = {
+			workspaceId: "D:\\pi",
+			messages: [firstUser, assistant, secondUser],
+			tools: {},
+			showThinking: false,
+			showToolDetails: false,
+			streaming: false,
+			disabled: false,
+			sessionKey: "session-1",
+			canEdit: true,
+			onEditMessage: vi.fn(),
+		};
+		const onEditDraft = vi.fn();
+		const onEditSend = vi.fn();
+		const onEditCancel = vi.fn();
+
+		const { rerender } = render(
+			<ChatView
+				{...baseProps}
+				editing={{ entryId: "e2", text: "second" }}
+				onEditDraft={onEditDraft}
+				onEditSend={onEditSend}
+				onEditCancel={onEditCancel}
+			/>,
+		);
+		// Exactly one editor, on the matching message.
+		const input = screen.getByTestId("user-message-editor-input") as HTMLTextAreaElement;
+		expect(input.value).toBe("second");
+		// The composer is disabled while the editor owns the turn boundary.
+		expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(true);
+
+		fireEvent.change(input, { target: { value: "second (edited)" } });
+		expect(onEditDraft).toHaveBeenCalledWith("second (edited)");
+		fireEvent.click(screen.getByTestId("edit-send-button"));
+		expect(onEditSend).toHaveBeenCalledTimes(1);
+
+		// Closing the editor re-enables the composer.
+		rerender(<ChatView {...baseProps} editing={null} onEditSend={onEditSend} />);
+		expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(false);
+		expect(screen.queryByTestId("user-message-editor-input")).toBeNull();
+	});
+
 	test("anchors the working status to the top of the assistant area while streaming", () => {
 		const userMessage = {
 			id: "u-working",
@@ -2242,16 +2463,17 @@ describe("CustomProviderDialog model fetch", () => {
 
 	test("fetch matches local catalog metadata and pre-fills added models", async () => {
 		const onFetchModels = vi.fn(async () => [{ id: "deepseek-v3" }]);
-		const onMatchModels = vi.fn(async () => [
+		const onMatchModels = vi.fn(async (): Promise<CustomProviderMatchedModel[]> => [
 			{
 				id: "deepseek-v3",
+				status: "matched",
 				contextWindow: 65536,
 				maxTokens: 8192,
 				reasoning: true,
 				thinkingLevelMap: { high: "high", max: "max" },
 			},
 		]);
-		const onSave = vi.fn(async () => {});
+		const onSave = vi.fn(async (_config: CustomProviderConfig, _apiKey?: string) => {});
 		render(
 			<CustomProviderDialog
 				busy={false}
@@ -2264,7 +2486,13 @@ describe("CustomProviderDialog model fetch", () => {
 		);
 		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x/v1" } });
 		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
-		await waitFor(() => expect(onMatchModels).toHaveBeenCalledWith(["deepseek-v3"]));
+		await waitFor(() =>
+			expect(onMatchModels).toHaveBeenCalledWith({
+				ids: ["deepseek-v3"],
+				baseUrl: "http://x/v1",
+				api: "openai-completions",
+			}),
+		);
 		await waitFor(() => expect(screen.getByText(/catalog ctx 65536/)).toBeTruthy());
 		expect(screen.getByText(/levels high\/max/)).toBeTruthy();
 		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
@@ -2303,6 +2531,88 @@ describe("CustomProviderDialog model fetch", () => {
 		await waitFor(() => expect(screen.getByTestId("custom-provider-fetched")).toBeTruthy());
 		expect(screen.getByTestId("fetched-model-check-plain-model")).toBeTruthy();
 		expect(screen.queryByText(/catalog ctx/)).toBeNull();
+		// The failure is surfaced as a non-blocking warning, not swallowed.
+		expect(screen.getByTestId("custom-provider-match-warning").textContent).toContain("catalog unavailable");
+		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
+		expect((screen.getByTestId("custom-provider-model-id-1") as HTMLInputElement).value).toBe("plain-model");
+		expect((screen.getByTestId("custom-provider-model-context-1") as HTMLInputElement).value).toBe("");
+	});
+
+	test("fetched models cannot be added until catalog matching settles", async () => {
+		const onFetchModels = vi.fn(async () => [{ id: "slow-model" }]);
+		let resolveMatch: ((matches: CustomProviderMatchedModel[]) => void) | undefined;
+		const onMatchModels = vi.fn(
+			() =>
+				new Promise<CustomProviderMatchedModel[]>((resolve) => {
+					resolveMatch = resolve;
+				}),
+		);
+		render(
+			<CustomProviderDialog
+				busy={false}
+				error={null}
+				onSave={vi.fn(async () => {})}
+				onFetchModels={onFetchModels}
+				onMatchModels={onMatchModels}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x/v1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		// Fetch already resolved, matching still pending: the checklist must not
+		// be published early, so no "Add selected" can race the metadata.
+		await waitFor(() => expect(onMatchModels).toHaveBeenCalled());
+		expect(screen.queryByTestId("custom-provider-fetched")).toBeNull();
+		expect(screen.getByText("Matching catalog metadata…")).toBeTruthy();
+		expect((screen.getByTestId("custom-provider-fetch") as HTMLButtonElement).disabled).toBe(true);
+		resolveMatch?.([
+			{
+				id: "slow-model",
+				status: "matched",
+				contextWindow: 65536,
+				maxTokens: 8192,
+				reasoning: true,
+				thinkingLevelMap: { high: "high" },
+			},
+		]);
+		await waitFor(() => expect(screen.getByTestId("custom-provider-fetched")).toBeTruthy());
+		expect((screen.getByTestId("custom-provider-add-selected") as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
+		// The metadata resolved before the rows were created: nothing is lost.
+		expect((screen.getByTestId("custom-provider-model-context-1") as HTMLInputElement).value).toBe("65536");
+		expect((screen.getByTestId("custom-provider-model-max-tokens-1") as HTMLInputElement).value).toBe("8192");
+		expect((screen.getByTestId("custom-provider-model-reasoning-1") as HTMLInputElement).checked).toBe(true);
+		expect((screen.getByTestId("custom-provider-thinking-value-1-high") as HTMLInputElement).value).toBe("high");
+	});
+
+	test("ambiguous catalog matches show a chip instead of conflicting pre-fills", async () => {
+		const onFetchModels = vi.fn(async () => [{ id: "shared-model" }]);
+		const onMatchModels = vi.fn(async (): Promise<CustomProviderMatchedModel[]> => [
+			{
+				id: "shared-model",
+				status: "ambiguous",
+				reasoning: true,
+				conflictingFields: ["contextWindow"],
+				candidateProviders: ["a", "b"],
+			},
+		]);
+		render(
+			<CustomProviderDialog
+				busy={false}
+				error={null}
+				onSave={vi.fn(async () => {})}
+				onFetchModels={onFetchModels}
+				onMatchModels={onMatchModels}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x/v1" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(screen.getByTestId("fetched-model-ambiguous-shared-model")).toBeTruthy());
+		// Agreed fields still pre-fill; conflicting fields stay empty.
+		fireEvent.click(screen.getByTestId("custom-provider-add-selected"));
+		expect((screen.getByTestId("custom-provider-model-reasoning-1") as HTMLInputElement).checked).toBe(true);
+		expect((screen.getByTestId("custom-provider-model-context-1") as HTMLInputElement).value).toBe("");
 	});
 
 	test("thinking level editor sets custom and hidden values manually", async () => {

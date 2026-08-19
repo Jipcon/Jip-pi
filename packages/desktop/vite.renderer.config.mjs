@@ -4,6 +4,10 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
 	plugins: [react()],
+	// Relative asset URLs: the packaged app loads the renderer through
+	// file:// (loadFile), where absolute /assets paths would resolve to
+	// the drive root and 404.
+	base: "./",
 	// Pin the dev server port so the main process can find it deterministically
 	// (the forge-provided MAIN_WINDOW_VITE_DEV_SERVER_URL define is racy).
 	// PI_DESKTOP_VITE_PORT lets parallel dev sessions pick a free port.

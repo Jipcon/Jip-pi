@@ -22,6 +22,8 @@ import {
 	type AgentSessionBackend,
 	type AgentState,
 	type AuthPromptResponse,
+	type EditAndResendResult,
+	type EditableUserMessage,
 	type InteractionResponse,
 	type ModelInfo,
 	type ModelRef,
@@ -55,6 +57,17 @@ export interface ManagedSessionBackend extends AgentSessionBackend {
 	readonly hasPendingInteractions: boolean;
 	readonly sessionId: string | undefined;
 	renameSession?(name: string): void;
+	/**
+	 * Editable user messages on the live leaf path, when the backend owns a
+	 * session manager (SDK path). Optional so legacy backends can omit it.
+	 */
+	editableUserMessages?(): EditableUserMessage[];
+	/**
+	 * Edit a past user message in place and resend it (in-file branch), when
+	 * the backend owns a live session (SDK path). Optional so legacy
+	 * backends can omit it.
+	 */
+	editAndResend?(entryId: string, text: string): Promise<EditAndResendResult>;
 }
 
 export interface SdkBackendManagerOptions {
@@ -100,6 +113,8 @@ export interface SdkBackendManagerOptions {
 	 * leave the state fields unset.
 	 */
 	readPersistedSessionState?(filePath: string): Promise<{ model: ModelInfo | null; thinkingLevel?: string }>;
+	/** Read the editable user messages of a persisted session (no live backend). */
+	readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]>;
 }
 
 interface SessionBackendRecord {
@@ -662,6 +677,56 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 			await this.disposeBackend(workspaceId, sessionId);
 		}
 		await this.options.deleteCatalogFile(session.file);
+	}
+
+	/**
+	 * Editable user messages of a session. A live backend answers from its
+	 * own `SessionManager.getBranch()` (same source as `getMessages()`, so
+	 * timestamps align exactly); a not-yet-materialized session is read from
+	 * its catalog file. Returns an empty list for sessions with no file yet.
+	 */
+	async listEditableUserMessages(workspaceId: string, sessionId: string): Promise<EditableUserMessage[]> {
+		const backend = this.getBackend(workspaceId, sessionId);
+		if (backend?.editableUserMessages) {
+			return backend.editableUserMessages();
+		}
+		const session = await this.options.findSession(sessionId);
+		if (!session?.file) {
+			return [];
+		}
+		return this.options.readEditableUserMessages(session.file);
+	}
+
+	/**
+	 * Edit a past user message in place and resend it: the session tree
+	 * branches before the edited message (same session file). Requires a
+	 * live session, so a not-yet-materialized session is materialized on
+	 * demand - an explicit user action, unlike history browsing. An
+	 * unpersisted session (no live backend, no catalog file) is rejected.
+	 */
+	async editUserMessage(
+		workspaceId: string,
+		sessionId: string,
+		entryId: string,
+		text: string,
+	): Promise<EditAndResendResult> {
+		const existing = this.getBackend(workspaceId, sessionId);
+		if (existing?.isStreaming) {
+			throw new Error("Wait for the current response to finish before editing a message");
+		}
+		if (!existing) {
+			const session = await this.options.findSession(sessionId);
+			if (!session?.file) {
+				throw new Error(
+					"This session has not been saved yet. Wait for the first assistant response before editing it.",
+				);
+			}
+		}
+		const backend = await this.getOrCreateBackend(workspaceId, sessionId);
+		if (!backend.editAndResend) {
+			throw new Error("Message editing is not supported by this backend");
+		}
+		return backend.editAndResend(entryId, text);
 	}
 
 	// -----------------------------------------------------------------------

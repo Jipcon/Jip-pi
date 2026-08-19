@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status, credentials, OAuth, handshake) with zero-backend availability.
 - `AgentSessionAdmin`: the legacy process-level session administration
   capability (create/list/switch/rename), used by the RPC adapter only.
+- Editable user messages: `EditableUserMessage` / `EditAndResendResult`
+  and the `messageEdit` capability, modeling edit-in-place — the session
+  tree branches before the edited message and the edited text is resent
+  in the same session (`{ status: "sent" }`, or `{ status: "cancelled" }`
+  when an extension vetoes the edit).
 
 ### Changed
 
