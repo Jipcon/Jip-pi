@@ -16,6 +16,7 @@ import type {
 	CustomProviderConfig,
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
+	CustomProviderMatchRequest,
 	CustomProviderMatchedModel,
 	CustomProviderModelConfig,
 } from "../../../shared/ipc.ts";
@@ -30,6 +31,13 @@ const API_OPTIONS: { value: CustomProviderApi; label: string }[] = [
 ];
 
 const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Fetch lifecycle: the fetched checklist is only published once catalog
+ * matching has settled, so models can never be added before `fetchedMeta`
+ * is populated (adding early would create rows without the pre-fill).
+ */
+type FetchPhase = "idle" | "fetching" | "matching";
 
 interface ModelDraft {
 	id: string;
@@ -85,7 +93,7 @@ export function CustomProviderDialog({
 	error: string | null;
 	onSave: (config: CustomProviderConfig, apiKey?: string) => Promise<void>;
 	onFetchModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
-	onMatchModels?: (ids: string[]) => Promise<CustomProviderMatchedModel[]>;
+	onMatchModels?: (request: CustomProviderMatchRequest) => Promise<CustomProviderMatchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const editing = initial !== undefined;
@@ -100,11 +108,14 @@ export function CustomProviderDialog({
 	);
 	const [models, setModels] = useState<ModelDraft[]>(initial?.models ? initial.models.map(toDraft) : [emptyDraft()]);
 	const [validationError, setValidationError] = useState<string | null>(null);
-	const [fetching, setFetching] = useState(false);
+	const [fetchPhase, setFetchPhase] = useState<FetchPhase>("idle");
 	const [fetchedModels, setFetchedModels] = useState<CustomProviderFetchedModel[]>([]);
 	const [selectedFetched, setSelectedFetched] = useState<ReadonlySet<string>>(new Set());
 	const [fetchedMeta, setFetchedMeta] = useState<ReadonlyMap<string, CustomProviderMatchedModel>>(new Map());
 	const [fetchError, setFetchError] = useState<string | null>(null);
+	// Non-blocking: catalog matching failures still leave the fetched list
+	// usable, the user just fills the parameters manually.
+	const [matchError, setMatchError] = useState<string | null>(null);
 
 	const addHeader = (): void => setHeaders((prev) => [...prev, { key: "", value: "" }]);
 	const updateHeader = (index: number, field: "key" | "value", value: string): void =>
@@ -125,8 +136,9 @@ export function CustomProviderDialog({
 			setFetchError("Enter a base URL before fetching models");
 			return;
 		}
-		setFetching(true);
+		setFetchPhase("fetching");
 		setFetchError(null);
+		setMatchError(null);
 		try {
 			const models = await onFetchModels({
 				baseUrl: trimmedBaseUrl,
@@ -139,23 +151,28 @@ export function CustomProviderDialog({
 				setFetchError("The endpoint returned no models");
 				return;
 			}
-			setFetchedModels(models);
-			setSelectedFetched(new Set(models.map((model) => model.id)));
-			setFetchedMeta(new Map());
+			setFetchPhase("matching");
 			// Local-catalog metadata matching is best-effort: failures never block
 			// the fetched list itself, the user can fill the fields manually.
+			let matches: CustomProviderMatchedModel[] = [];
 			if (onMatchModels) {
 				try {
-					const matches = await onMatchModels(models.map((model) => model.id));
-					setFetchedMeta(new Map(matches.map((match) => [match.id, match])));
-				} catch {
-					// Keep the fetched list usable without metadata.
+					matches = await onMatchModels({ ids: models.map((model) => model.id), baseUrl: trimmedBaseUrl, api });
+				} catch (error) {
+					setMatchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
 				}
 			}
+			// Publish the list, its selection and the metadata atomically so
+			// "Add selected" can never run against a half-matched result.
+			setFetchedModels(models);
+			setSelectedFetched(new Set(models.map((model) => model.id)));
+			setFetchedMeta(
+				new Map(matches.filter((match) => match.status !== "unmatched").map((match) => [match.id, match])),
+			);
 		} catch (error) {
 			setFetchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
 		} finally {
-			setFetching(false);
+			setFetchPhase("idle");
 		}
 	};
 
@@ -178,6 +195,14 @@ export function CustomProviderDialog({
 		if (!meta) return null;
 		return (
 			<>
+				{meta.status === "ambiguous" && (
+					<span
+						className="custom-provider-fetched-meta custom-provider-fetched-ambiguous"
+						data-testid={`fetched-model-ambiguous-${model.id}`}
+					>
+						Catalog match ambiguous
+					</span>
+				)}
 				{meta.reasoning === true && <span className="custom-provider-fetched-meta">thinking</span>}
 				{meta.contextWindow !== undefined && (
 					<span className="custom-provider-fetched-meta">catalog ctx {meta.contextWindow}</span>
@@ -204,6 +229,9 @@ export function CustomProviderDialog({
 		);
 
 	const addSelectedFetched = (): void => {
+		// Defensive guard for the button state: metadata must be settled before
+		// rows are created, otherwise the pre-fill is lost for those rows.
+		if (fetchPhase !== "idle") return;
 		const existing = new Set(models.map((draft) => draft.id.trim()).filter((modelId) => modelId.length > 0));
 		const additions = fetchedModels
 			.filter((model) => selectedFetched.has(model.id) && !existing.has(model.id))
@@ -226,6 +254,7 @@ export function CustomProviderDialog({
 		setSelectedFetched(new Set());
 		setFetchedMeta(new Map());
 		setFetchError(null);
+		setMatchError(null);
 	};
 
 	const save = async (): Promise<void> => {
@@ -292,7 +321,7 @@ export function CustomProviderDialog({
 
 	return (
 		<div className="modal-backdrop modal-backdrop-nested" data-testid="custom-provider-dialog">
-			<div className="modal modal-nested modal-narrow-scroll">
+			<div className="modal modal-nested modal-narrow-scroll modal-wide">
 				<div className="modal-header">
 					<div>
 						<span className="modal-eyebrow">Custom provider</span>
@@ -453,11 +482,15 @@ export function CustomProviderDialog({
 										<button
 											type="button"
 											className="btn btn-small"
-											disabled={busy || fetching || baseUrl.trim().length === 0}
+											disabled={busy || fetchPhase !== "idle" || baseUrl.trim().length === 0}
 											onClick={() => void fetchModels()}
 											data-testid="custom-provider-fetch"
 										>
-											{fetching ? "Fetching…" : "Fetch models"}
+											{fetchPhase === "fetching"
+												? "Fetching models…"
+												: fetchPhase === "matching"
+													? "Matching catalog metadata…"
+													: "Fetch models"}
 										</button>
 									)}
 									<button
@@ -472,6 +505,12 @@ export function CustomProviderDialog({
 								</div>
 							</div>
 							{fetchError && <p className="settings-error">{fetchError}</p>}
+							{matchError && (
+								<p className="settings-note settings-note-warning" data-testid="custom-provider-match-warning">
+									Catalog metadata could not be loaded ({matchError}). Parameters can still be entered
+									manually.
+								</p>
+							)}
 							{fetchedModels.length > 0 && (
 								<div className="custom-provider-fetched" data-testid="custom-provider-fetched">
 									<div className="custom-provider-fetched-header">
@@ -513,7 +552,7 @@ export function CustomProviderDialog({
 									<button
 										type="button"
 										className="btn btn-small"
-										disabled={busy || selectedFetched.size === 0}
+										disabled={busy || fetchPhase !== "idle" || selectedFetched.size === 0}
 										onClick={addSelectedFetched}
 										data-testid="custom-provider-add-selected"
 									>

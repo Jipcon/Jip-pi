@@ -14,6 +14,7 @@ import type {
 	CustomProviderConfig,
 	CustomProviderFetchedModel,
 	CustomProviderFetchRequest,
+	CustomProviderMatchRequest,
 	CustomProviderMatchedModel,
 	SessionStorageConfig,
 	SessionStorageMode,
@@ -79,7 +80,7 @@ export function SettingsPanel({
 	onDeleteCustomProvider?: (providerId: string) => Promise<void>;
 	onReloadModels?: () => Promise<void>;
 	onFetchCustomProviderModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
-	onMatchCustomProviderModels?: (ids: string[]) => Promise<CustomProviderMatchedModel[]>;
+	onMatchCustomProviderModels?: (request: CustomProviderMatchRequest) => Promise<CustomProviderMatchedModel[]>;
 	onClose: () => void;
 }): React.JSX.Element {
 	const [activeSection, setActiveSection] = useState<SettingsSection>("general");
