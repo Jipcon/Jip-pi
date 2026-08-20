@@ -240,9 +240,13 @@ export function Select({
 									onPointerEnter={() => setActiveIndex(index)}
 								>
 									<span className="select-option-copy">
-										<span className="select-option-label">{option.label}</span>
+										<span className="select-option-label" title={option.label}>
+											{option.label}
+										</span>
 										{option.description && (
-											<span className="select-option-description">{option.description}</span>
+											<span className="select-option-description" title={option.description}>
+												{option.description}
+											</span>
 										)}
 									</span>
 								{option.meta && <span className="select-option-meta">{option.meta}</span>}

@@ -3,12 +3,12 @@
  *
  * ┌─────────── TopBar (60px) ───────────┐
  * ├ Sidebar ┬ Chat (flex) ┬ Inspector ──┤
- * │ 278px   │  720px col  │  340px      │
+ * │ 256px   │  720px col  │  340px      │
  * │         ├ UsageBar ───┤ collapsible │
  * │         ├ Composer ───┤             │
  * └─────────┴─────────────┴─────────────┘
  *
- * The sidebar has a fixed 278px width. The chat column is capped and
+ * The sidebar defaults to 256px and is resizable (200px–480px). The chat column is capped and The chat column is capped and
  * centered; the usage strip is a full-width status bar pinned above the
  * composer.
  *

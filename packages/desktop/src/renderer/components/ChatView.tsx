@@ -228,6 +228,7 @@ export function ChatView({
 				<div className="chat-inner">
 					{messages.length === 0 && (
 						<div className="chat-empty">
+							<div className="chat-empty-icon" aria-hidden="true" />
 							<h1>Build with Jip-pi</h1>
 							<p>Explore your codebase, plan a change, or trace a difficult bug.</p>
 						</div>

@@ -4,7 +4,7 @@
  * session file layout to the renderer.
  */
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@earendil-works/pi-agent-protocol";
 import { workspacePathKey, workspacePathsEqual } from "../../shared/workspace-path.ts";
 import {
@@ -18,6 +18,51 @@ import {
 import type { SessionStatusIndicator } from "../state/store.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { Icon } from "./Icon.tsx";
+
+const SIDEBAR_WIDTH_STORAGE_KEY = "pi-desktop.sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 256;
+const SIDEBAR_MIN_WIDTH_FALLBACK = 200;
+const SIDEBAR_MAX_WIDTH_FALLBACK = 480;
+const SIDEBAR_MIN_CONTENT_WIDTH = 320;
+
+function getSidebarBounds(): { minWidth: number; maxWidth: number } {
+	const styles = getComputedStyle(document.documentElement);
+	const minWidth = Number.parseFloat(styles.getPropertyValue("--sidebar-min-width")) || SIDEBAR_MIN_WIDTH_FALLBACK;
+	const maxWidth = Number.parseFloat(styles.getPropertyValue("--sidebar-max-width")) || SIDEBAR_MAX_WIDTH_FALLBACK;
+	const viewportMax = window.innerWidth - SIDEBAR_MIN_CONTENT_WIDTH;
+	return {
+		minWidth,
+		maxWidth: Math.max(minWidth, Math.min(maxWidth, viewportMax)),
+	};
+}
+
+function clampSidebarWidth(width: number): number {
+	const { minWidth, maxWidth } = getSidebarBounds();
+	return Math.max(minWidth, Math.min(maxWidth, width));
+}
+
+function applySidebarWidth(width: number): void {
+	document.documentElement.style.setProperty("--sidebar-width", `${Math.round(clampSidebarWidth(width))}px`);
+}
+
+function loadSidebarWidth(): number | null {
+	try {
+		const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+		if (raw === null) return null;
+		const value = Number(raw);
+		return Number.isFinite(value) ? value : null;
+	} catch {
+		return null;
+	}
+}
+
+function saveSidebarWidth(width: number): void {
+	try {
+		window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(clampSidebarWidth(width))));
+	} catch {
+		// Ignore storage failures.
+	}
+}
 
 interface SessionContextMenuState {
 	session: SessionInfo;
@@ -350,6 +395,96 @@ export function Sidebar({
 	const [deleteTarget, setDeleteTarget] = useState<SessionInfo | null>(null);
 	const [removeWorkspaceTarget, setRemoveWorkspaceTarget] = useState<string | null>(null);
 	const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+	const sidebarRef = useRef<HTMLElement>(null);
+	const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+	useLayoutEffect(() => {
+		const saved = loadSidebarWidth();
+		if (saved !== null) {
+			applySidebarWidth(saved);
+		}
+	}, []);
+
+	useEffect(() => {
+		const onWindowResize = () => {
+			const current = sidebarRef.current?.getBoundingClientRect().width;
+			if (current !== undefined) {
+				applySidebarWidth(current);
+			}
+		};
+		window.addEventListener("resize", onWindowResize);
+		return () => window.removeEventListener("resize", onWindowResize);
+	}, []);
+
+	const handleResizerPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+		if (window.matchMedia("(max-width: 900px)").matches) return;
+		event.preventDefault();
+		const sidebar = sidebarRef.current;
+		if (!sidebar) return;
+		const startX = event.clientX;
+		const startWidth = sidebar.getBoundingClientRect().width;
+		dragStateRef.current = { startX, startWidth };
+		document.body.classList.add("sidebar-resizing");
+		const target = event.currentTarget;
+		target.setPointerCapture?.(event.pointerId);
+
+		const onPointerMove = (e: PointerEvent) => {
+			const state = dragStateRef.current;
+			if (!state) return;
+			applySidebarWidth(state.startWidth + (e.clientX - state.startX));
+		};
+
+		const cleanup = (pointerId: number) => {
+			dragStateRef.current = null;
+			document.body.classList.remove("sidebar-resizing");
+			try {
+				target.releasePointerCapture?.(pointerId);
+			} catch {
+				// Ignore release failures.
+			}
+			window.removeEventListener("pointermove", onPointerMove);
+			window.removeEventListener("pointerup", onPointerUp);
+			window.removeEventListener("pointercancel", onPointerCancel);
+			const current = sidebar.getBoundingClientRect().width;
+			saveSidebarWidth(current);
+		};
+
+		const onPointerUp = (e: PointerEvent) => cleanup(e.pointerId);
+		const onPointerCancel = (e: PointerEvent) => cleanup(e.pointerId);
+
+		window.addEventListener("pointermove", onPointerMove);
+		window.addEventListener("pointerup", onPointerUp);
+		window.addEventListener("pointercancel", onPointerCancel);
+	}, []);
+
+	const handleResizerDoubleClick = useCallback(() => {
+		if (window.matchMedia("(max-width: 900px)").matches) return;
+		applySidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+		saveSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+	}, []);
+
+	const handleResizerKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+		if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+			event.preventDefault();
+			const delta = event.key === "ArrowLeft" ? -12 : 12;
+			const current = sidebarRef.current?.getBoundingClientRect().width ?? DEFAULT_SIDEBAR_WIDTH;
+			const next = clampSidebarWidth(current + delta);
+			applySidebarWidth(next);
+			saveSidebarWidth(next);
+		} else if (event.key === "Home") {
+			event.preventDefault();
+			const { minWidth } = getSidebarBounds();
+			applySidebarWidth(minWidth);
+			saveSidebarWidth(minWidth);
+		} else if (event.key === "End") {
+			event.preventDefault();
+			const { maxWidth } = getSidebarBounds();
+			applySidebarWidth(maxWidth);
+			saveSidebarWidth(maxWidth);
+		} else if (event.key === "Escape") {
+			(event.currentTarget as HTMLElement).blur();
+		}
+	}, []);
 
 	const handleNewSession = (): void => {
 		if (backendRunning && workspace) {
@@ -366,7 +501,7 @@ export function Sidebar({
 	};
 
 	return (
-		<aside className="sidebar" data-testid="sidebar">
+		<aside ref={sidebarRef} className="sidebar" data-testid="sidebar">
 			<section className="sidebar-section sidebar-workspace-section">
 				<div className="sidebar-actions">
 					<button
@@ -645,6 +780,19 @@ export function Sidebar({
 					onClose={() => setRemoveWorkspaceTarget(null)}
 				/>
 			)}
+			<button
+				type="button"
+				className="sidebar-resizer"
+				title="Drag to resize, double-click to reset"
+				aria-label="Resize sidebar"
+				aria-orientation="vertical"
+				role="separator"
+				tabIndex={0}
+				onPointerDown={handleResizerPointerDown}
+				onDoubleClick={handleResizerDoubleClick}
+				onKeyDown={handleResizerKeyDown}
+				data-testid="sidebar-resizer"
+			/>
 		</aside>
 	);
 }

@@ -131,6 +131,52 @@ textarea:focus-visible {
 	border-right: 1px solid var(--border);
 	background: var(--canvas);
 	overflow: hidden;
+	position: relative;
+}
+
+.sidebar-resizer {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 6px;
+	height: 100%;
+	cursor: col-resize;
+	z-index: 10;
+	touch-action: none;
+	background: transparent;
+	border: 0;
+	padding: 0;
+}
+
+.sidebar-resizer::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 2px;
+	width: 1px;
+	height: 100%;
+	background: transparent;
+	transition: background 120ms ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:active::after,
+.sidebar-resizer:focus-visible::after {
+	background: var(--accent);
+}
+
+.sidebar-resizer:focus-visible {
+	outline: none;
+}
+
+body.sidebar-resizing {
+	cursor: col-resize !important;
+	user-select: none !important;
+}
+
+body.sidebar-resizing * {
+	cursor: col-resize !important;
+	user-select: none !important;
 }
 
 .chat {
@@ -266,25 +312,44 @@ textarea:focus-visible {
 
 .select-popup {
 	position: absolute;
-	top: calc(100% + 6px);
+	top: calc(100% + 8px);
 	left: 0;
 	min-width: 100%;
 	width: max-content;
-	max-width: 340px;
-	max-height: 320px;
+	max-width: 380px;
+	max-height: 360px;
 	margin: 0;
-	padding: 10px;
+	padding: 6px;
 	overflow-y: auto;
 	border: 1px solid var(--border-strong);
-	border-radius: var(--radius-normal);
+	border-radius: 12px;
 	background: var(--surface-overlay);
-	box-shadow: var(--shadow-large);
+	box-shadow:
+		0 16px 48px rgba(0, 0, 0, 0.45),
+		0 4px 12px rgba(0, 0, 0, 0.3);
 	list-style: none;
-	animation: select-popup-in 120ms ease-out;
+	animation: select-popup-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 	scrollbar-gutter: stable;
 	scrollbar-width: thin;
 	scrollbar-color: var(--border-strong) transparent;
 	z-index: 40;
+}
+
+/* Per-dropdown width: provider/model need room, thinking stays compact. */
+.select:has(.provider-select) .select-popup {
+	min-width: 304px;
+	max-width: 380px;
+}
+
+.select:has(.model-select) .select-popup {
+	min-width: 280px;
+	max-width: 360px;
+}
+
+.select:has(.thinking-select) .select-popup {
+	min-width: 210px;
+	max-width: 228px;
+	width: 218px;
 }
 
 .select-popup::-webkit-scrollbar {
@@ -339,33 +404,38 @@ textarea:focus-visible {
 }
 
 .select-empty {
-	padding: 8px 10px;
-	color: var(--text-faint);
-	font-size: 12.5px;
+	padding: 14px 12px;
+	color: var(--text-muted);
+	font-size: 13px;
+	text-align: center;
 }
 
 .select-option {
 	display: flex;
 	width: 100%;
-	min-height: 32px;
+	min-height: 36px;
 	align-items: center;
-	gap: 10px;
-	padding: 4px 10px;
+	gap: 12px;
+	padding: 8px 12px;
 	border: 0;
-	border-radius: var(--radius-small);
+	border-radius: 8px;
 	background: transparent;
 	color: var(--text-secondary);
-	font-size: 12.5px;
+	font-size: 13px;
 	font-weight: 500;
+	line-height: 1.35;
 	text-align: left;
 	cursor: pointer;
 	transition:
-		background-color 120ms ease,
-		color 120ms ease;
+		background-color 140ms ease,
+		color 140ms ease,
+		transform 140ms ease;
 }
 
 .select-option-detailed {
-	min-height: 44px;
+	min-height: 56px;
+	padding: 10px 12px;
+	align-items: center;
 }
 
 .select-option:hover:not(:disabled),
@@ -374,15 +444,23 @@ textarea:focus-visible {
 	color: var(--text);
 }
 
+/* Keep keyboard-active from washing out the selected accent. */
+.select-option-selected.select-option-active:not(:disabled) {
+	background: var(--accent);
+	color: var(--text-on-accent);
+}
+
 .select-option:disabled {
 	color: var(--text-faint);
 	cursor: not-allowed;
+	opacity: 0.7;
 }
 
 /* Selected option mirrors the active sidebar session: solid accent fill. */
 .select-option-selected {
 	background: var(--accent);
 	color: var(--text-on-accent);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .select-option-selected:hover:not(:disabled) {
@@ -393,7 +471,7 @@ textarea:focus-visible {
 /* Secondary text stays readable on the solid accent fill. */
 .select-option-selected .select-option-description,
 .select-option-selected .select-option-meta {
-	color: rgba(255, 255, 255, 0.72);
+	color: rgba(255, 255, 255, 0.78);
 }
 
 .select-option-copy {
@@ -401,50 +479,91 @@ textarea:focus-visible {
 	min-width: 0;
 	flex: 1;
 	flex-direction: column;
-	gap: 1px;
+	gap: 3px;
+	justify-content: center;
 }
 
 .select-option-label {
 	overflow: hidden;
+	font-weight: 550;
+	line-height: 1.3;
+	letter-spacing: -0.01em;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .select-option-description {
 	overflow: hidden;
-	color: var(--text-faint);
-	font-size: 11px;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.35;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .select-option-meta {
+	display: inline-flex;
 	flex: 0 0 auto;
+	align-items: center;
+	justify-content: flex-end;
+	min-width: 44px;
 	margin-left: auto;
-	color: var(--text-faint);
-	font-size: 11px;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.01em;
+	text-align: right;
+	white-space: nowrap;
 }
 
 /* Thinking strength meter: six segments, off fills none. */
 .thinking-meter {
 	display: inline-flex;
 	align-items: center;
-	gap: 3px;
+	gap: 4px;
+	flex: 0 0 auto;
 }
 
 .thinking-meter-segment {
-	width: 12px;
-	height: 4px;
-	border-radius: 2px;
+	width: 14px;
+	height: 5px;
+	border-radius: 999px;
 	background: var(--surface-active);
+	transition: background-color 140ms ease;
 }
 
 .thinking-meter-segment-filled {
 	background: var(--accent);
 }
 
+.select-option:hover:not(:disabled) .thinking-meter-segment-filled,
+.select-option-active:not(:disabled) .thinking-meter-segment-filled {
+	background: var(--accent-hover);
+}
+
+.select-option-selected .thinking-meter-segment {
+	background: rgba(255, 255, 255, 0.22);
+}
+
 .select-option-selected .thinking-meter-segment-filled {
-	background: var(--text-on-accent);
+	background: #ffffff;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Meta column sizing per dropdown — keeps right edge aligned. */
+.select:has(.model-select) .select-option-meta {
+	min-width: 52px;
+}
+
+.select:has(.thinking-select) .select-option-meta {
+	min-width: 104px;
+	justify-content: flex-end;
+}
+
+.select:has(.provider-select) .select-option-detailed .select-option-meta {
+	align-self: center;
 }
 
 /* The model value is the primary readout of the top bar; provider and
@@ -1079,16 +1198,33 @@ textarea:focus-visible {
 
 .chat-scroll-empty .chat-inner {
 	justify-content: center;
-	padding-bottom: 80px;
+	align-items: center;
+	padding: 32px 30px;
 }
 
 .chat-empty {
 	display: flex;
+	width: 100%;
 	max-width: 520px;
-	margin: auto;
+	margin: 0;
 	align-items: center;
 	flex-direction: column;
+	justify-content: center;
 	text-align: center;
+}
+
+.chat-empty-icon {
+	display: block;
+	width: 64px;
+	height: 64px;
+	flex: 0 0 64px;
+	margin-bottom: 20px;
+	border: 1px solid var(--accent-border);
+	border-radius: 16px;
+	background: #010101 url("../../../assets/icon.png") center / cover no-repeat;
+	box-shadow:
+		0 8px 24px rgba(0, 0, 0, 0.35),
+		0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .chat-empty h1 {

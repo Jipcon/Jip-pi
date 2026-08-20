@@ -61,7 +61,9 @@
 	--focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.24);
 
 	/* layout metrics: consumed by app.css shell/chat/sidebar rules */
-	--sidebar-width: 278px;
+	--sidebar-width: 256px;
+	--sidebar-min-width: 200px;
+	--sidebar-max-width: 480px;
 	--chat-column-width: 820px;
 	--statusbar-height: 30px;
 
