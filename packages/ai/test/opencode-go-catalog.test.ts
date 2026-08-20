@@ -28,8 +28,9 @@ function goCatalog(): Record<string, CatalogEntry> {
 	return Object.fromEntries(models.map((model) => [model.id, model as CatalogEntry]));
 }
 
-/** Verified against the live Go endpoint on 2026-08-17 (no network here):
- * glm-5.3 added to the catalog; deepseek-v4-flash now routes via
+/** Verified against the live Go endpoint on 2026-08-20 (no network here):
+ * muse-spark-1.2-contributor added to the catalog (now 20 models);
+ * glm-5.3 added previously; deepseek-v4-flash now routes via
  * openai-completions (both openai-completions and anthropic-messages accept
  * it live, but models.dev now reports openai-completions). */
 const BASELINE_IDS = [
@@ -48,6 +49,7 @@ const BASELINE_IDS = [
 	"mimo-v2.5-pro",
 	"minimax-m2.7",
 	"minimax-m3",
+	"muse-spark-1.2-contributor",
 	"qwen3.6-plus",
 	"qwen3.7-max",
 	"qwen3.7-plus",
@@ -62,7 +64,7 @@ const BASELINE_ENDPOINTS: Record<string, string> = {
 };
 
 describe("OpenCode Go catalog baseline", () => {
-	test("the official 19-model set is present with no unexpected additions", () => {
+	test("the official 20-model set is present with no unexpected additions", () => {
 		const catalog = goCatalog();
 		expect(Object.keys(catalog).sort()).toEqual([...BASELINE_IDS].sort());
 	});

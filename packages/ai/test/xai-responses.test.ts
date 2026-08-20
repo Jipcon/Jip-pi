@@ -108,7 +108,7 @@ describe("xAI Responses provider", () => {
 		expect(captured.body.input).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
-					role: "developer",
+					role: "system",
 					content: "You are a careful coding assistant.",
 				}),
 			]),

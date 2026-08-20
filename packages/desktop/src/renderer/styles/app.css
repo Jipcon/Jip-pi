@@ -1072,38 +1072,78 @@ body.sidebar-resizing * {
 }
 
 .session-context-menu {
+	--menu-dither-extent: 32px;
 	position: fixed;
 	display: flex;
 	width: 188px;
 	flex-direction: column;
-	gap: 4px;
-	padding: 6px;
+	gap: 2px;
+	padding: 5px;
 	overflow: visible;
-	border: 1px solid var(--border);
-	border-radius: 12px;
-	background: var(--surface-raised);
-	box-shadow: var(--shadow-large);
+	border: 0;
+	border-radius: var(--radius-normal);
+	background: transparent;
+	box-shadow: none;
+	isolation: isolate;
 	z-index: 71;
 }
 
+.session-context-menu::before,
+.session-context-menu::after,
 .session-context-menu-surface {
-	display: none;
+	position: absolute;
+	pointer-events: none;
+	content: "";
+}
+
+.session-context-menu::before {
+	inset: 0;
+	border-radius: inherit;
+	box-shadow:
+		0 7px 18px rgba(0, 0, 0, 0.2),
+		0 20px 48px rgba(0, 0, 0, 0.14);
+	z-index: -3;
+}
+
+.session-context-menu::after {
+	inset: calc(var(--menu-dither-extent) * -1);
+	padding: var(--menu-dither-extent);
+	border-radius: calc(var(--radius-normal) + var(--menu-dither-extent));
+	background-image: image-set(
+		url("../assets/menu-blue-noise-1x.png") 1x,
+		url("../assets/menu-blue-noise-2x.png") 2x
+	);
+	background-repeat: repeat;
+	background-size: 64px 64px;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent) border-box,
+		linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent) border-box;
+	mask-composite: exclude, intersect;
+	z-index: -2;
+}
+
+.session-context-menu-surface {
+	inset: 0;
+	border: 1px solid var(--border-strong);
+	border-radius: inherit;
+	background: var(--surface-overlay);
+	z-index: -1;
 }
 
 .session-context-menu > button {
 	position: relative;
 	display: flex;
 	width: 100%;
-	height: 28px;
+	height: 32px;
 	align-items: center;
 	gap: 9px;
-	padding: 0 12px;
+	padding: 0 9px;
 	border: 0;
-	border-radius: 8px;
+	border-radius: var(--radius-small);
 	background: transparent;
 	color: var(--text-secondary);
-	font-size: 13px;
-	font-weight: 500;
+	font-size: 12px;
 	text-align: left;
 	cursor: pointer;
 	z-index: 0;
@@ -1122,14 +1162,13 @@ body.sidebar-resizing * {
 }
 
 .session-context-menu > .session-context-menu-danger:not(:disabled) {
-	background: transparent;
 	color: var(--danger);
 }
 
 .session-context-menu > .session-context-menu-danger:hover:not(:disabled),
 .session-context-menu > .session-context-menu-danger:focus-visible:not(:disabled) {
 	background: var(--danger-soft);
-	color: var(--danger);
+	color: var(--danger-hover);
 }
 
 /* ------------------------------------------------------------------ */
