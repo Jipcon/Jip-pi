@@ -20,6 +20,7 @@ import type {
 	SessionStorageMode,
 } from "../../shared/ipc.ts";
 import { Icon, type IconName } from "./Icon.tsx";
+import { Select } from "./Select.tsx";
 import { ApiKeyDialog } from "./settings/ApiKeyDialog.tsx";
 import { CustomProviderDialog } from "./settings/CustomProviderDialog.tsx";
 import { CustomProvidersSection } from "./settings/CustomProvidersSection.tsx";
@@ -76,7 +77,7 @@ export function SettingsPanel({
 	onRemoveCredential?: (provider: string) => Promise<void>;
 	onStartOAuthLogin?: (provider: string) => void;
 	onListCustomProviders?: () => Promise<CustomProviderConfig[]>;
-	onSaveCustomProvider?: (config: CustomProviderConfig) => Promise<void>;
+	onSaveCustomProvider?: (config: CustomProviderConfig, apiKey?: string) => Promise<void>;
 	onDeleteCustomProvider?: (providerId: string) => Promise<void>;
 	onReloadModels?: () => Promise<void>;
 	onFetchCustomProviderModels?: (request: CustomProviderFetchRequest) => Promise<CustomProviderFetchedModel[]>;
@@ -215,19 +216,17 @@ export function SettingsPanel({
 		setCustomBusy(true);
 		setCustomError(null);
 		try {
-			await onSaveCustomProvider(config);
-			// The dialog's optional API key powers the model-list fetch; store it
-			// through the credential API (auth.json) so models.json stays
-			// secret-free. Saving is idempotent (upsert), so a retry after a key
-			// failure re-applies both steps safely.
+			// Config and optional API key go through one operation so the
+			// models/auth refresh happens exactly once. The key is stored
+			// through the credential API (auth.json), keeping models.json
+			// secret-free. Saving is idempotent (upsert), so a retry after a
+			// key failure re-applies both steps safely.
 			const trimmedKey = apiKey?.trim();
-			if (trimmedKey && onSaveApiKey) {
-				await onSaveApiKey(config.id, trimmedKey);
-			}
+			await onSaveCustomProvider(config, trimmedKey ? trimmedKey : undefined);
 			setCustomDialog(null);
 			await refreshCustomProviders();
 		} catch (error) {
-			setCustomError(error instanceof Error ? error.message : String(error));
+			setCustomError(redactAuthError(error instanceof Error ? error.message : String(error)));
 		} finally {
 			setCustomBusy(false);
 		}
@@ -241,7 +240,9 @@ export function SettingsPanel({
 			await onDeleteCustomProvider(providerId);
 			await refreshCustomProviders();
 		} catch (error) {
-			setCustomError(error instanceof Error ? error.message : String(error));
+			// Rethrown so the confirmation dialog stays open and shows the
+			// error; the busy flag still settles in finally.
+			throw error instanceof Error ? error : new Error(String(error));
 		} finally {
 			setCustomBusy(false);
 		}
@@ -330,20 +331,22 @@ export function SettingsPanel({
 								</div>
 								<h4 className="inspector-subheading">Storage</h4>
 								<div className="settings-storage">
-									<label className="settings-field">
-										<span>Location</span>
-										<select
-											className="modal-input"
-											value={storageMode}
-											disabled={storageControlsDisabled}
-											onChange={(event) => setStorageMode(event.target.value as SessionStorageMode)}
-											data-testid="session-storage-mode"
-										>
-											<option value="default">Jip-pi user directory</option>
-											<option value="workspace">Inside each workspace (recommended)</option>
-											<option value="custom">Custom root</option>
-										</select>
-									</label>
+																	<div className="settings-field">
+									<span>Location</span>
+									<Select
+										value={storageMode}
+										options={[
+											{ value: "default", label: "Jip-pi user directory" },
+											{ value: "workspace", label: "Inside each workspace (recommended)" },
+											{ value: "custom", label: "Custom root" },
+										]}
+										disabled={storageControlsDisabled}
+										onChange={(value) => setStorageMode(value as SessionStorageMode)}
+										ariaLabel="Session storage location"
+										testId="session-storage-mode"
+										triggerClassName="modal-input"
+									/>
+								</div>
 									{storageMode === "custom" && (
 										<div className="settings-storage-path">
 											<input
@@ -406,7 +409,7 @@ export function SettingsPanel({
 											const config = customProviders.find((entry) => entry.id === providerId);
 											if (config) setCustomDialog({ mode: "edit", config });
 										}}
-										onDelete={(providerId) => void deleteCustomProvider(providerId)}
+										onDelete={(providerId) => deleteCustomProvider(providerId)}
 										onReload={() => void reloadModels()}
 									/>
 								)}

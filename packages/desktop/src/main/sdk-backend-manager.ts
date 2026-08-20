@@ -30,6 +30,7 @@ import {
 	messageText,
 	type ProviderAuthStatus,
 	type SessionInfo,
+	type SessionProjection,
 	type SessionUsage,
 	type UserMessage,
 } from "@earendil-works/pi-agent-protocol";
@@ -63,27 +64,33 @@ export interface ManagedSessionBackend extends AgentSessionBackend {
 	 */
 	editableUserMessages?(): EditableUserMessage[];
 	/**
-	 * Edit a past user message in place and resend it (in-file branch), when
-	 * the backend owns a live session (SDK path). Optional so legacy
-	 * backends can omit it.
+	 * Messages with structurally paired stable entry ids plus the editable
+	 * list of the live session (SDK path). Optional so legacy backends can
+	 * omit it.
 	 */
-	editAndResend?(entryId: string, text: string): Promise<EditAndResendResult>;
+	sessionProjectionParts?(): {
+		messages: AgentMessage[];
+		entryIds: Array<string | undefined>;
+		editable: EditableUserMessage[];
+	};
 }
 
 export interface SdkBackendManagerOptions {
 	agentDir: string;
 	/** Host services with the shared runtime promise exposed. */
 	hostServices: AgentHostServices & { sharedRuntime: Promise<ModelRuntime> };
-	/** Read a session's full history through Pi's own parser (catalog). */
-	readSessionHistory(filePath: string): Promise<AgentMessage[]>;
-	/** Compute usage stats for a persisted session without a live backend. */
-	readSessionUsage(
+	/**
+	 * One-pass projection of a persisted session (messages, entry ids,
+	 * persisted state, usage, editable) — the single read/parse path for
+	 * historical sessions.
+	 */
+	readSessionProjection(
 		filePath: string,
 		options: {
 			sessionId: string;
 			resolveContextWindow(model: { provider: string; modelId: string } | null): number | undefined;
 		},
-	): Promise<SessionUsage>;
+	): Promise<SessionProjection>;
 	/** Resolve session metadata by id (cached catalog). */
 	findSession(sessionId: string): Promise<SessionInfo | null>;
 	/** Cached session catalog for all workspaces; live state is layered on top. */
@@ -106,15 +113,6 @@ export interface SdkBackendManagerOptions {
 		workspacePath: string,
 		pendingModel?: ModelRef,
 	): Promise<{ model: ModelInfo | null; thinkingLevel: string }>;
-	/**
-	 * Read a persisted session's file-recorded model/thinking state (mirrors
-	 * createAgentSession's restore path), so reopened historical sessions
-	 * display their real model before materialization. Best-effort: failures
-	 * leave the state fields unset.
-	 */
-	readPersistedSessionState?(filePath: string): Promise<{ model: ModelInfo | null; thinkingLevel?: string }>;
-	/** Read the editable user messages of a persisted session (no live backend). */
-	readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]>;
 }
 
 interface SessionBackendRecord {
@@ -324,6 +322,19 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		this.workspaces.set(key, workspaceRecord);
 		workspaceRecord.lastUsedAt = Date.now();
 
+		// A materialization for this session is already in flight: join it
+		// instead of creating a second adapter. A start failure rejects every
+		// joiner with the same error.
+		const inflight = workspaceRecord.sessions.get(sessionId);
+		if (inflight) {
+			await inflight.startPromise;
+			if (workspaceRecord.sessions.get(sessionId) !== inflight || !inflight.backend.isRunning) {
+				throw new Error("Session backend was disposed while starting");
+			}
+			this.touch(workspace, sessionId);
+			return inflight.backend;
+		}
+
 		const pending = this.takePendingConfig(workspace, sessionId);
 		const backend = this.createBackend(workspace);
 		const record: SessionBackendRecord = {
@@ -333,27 +344,40 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 			backend,
 			lastUsedAt: Date.now(),
 		};
+		// Register the authoritative record before the first await so
+		// concurrent callers join this materialization instead of starting
+		// their own. Pending and running records share this one interface.
 		workspaceRecord.sessions.set(sessionId, record);
-		record.startPromise = backend.start({
-			workspacePath: workspace,
-			sessionId,
-			sessionFile: (await this.options.findSession(sessionId))?.file,
-			...(pending?.model !== undefined ? { model: pending.model } : {}),
-		});
-		try {
-			await record.startPromise;
+		record.startPromise = (async () => {
+			await backend.start({
+				workspacePath: workspace,
+				sessionId,
+				sessionFile: (await this.options.findSession(sessionId))?.file,
+				...(pending?.model !== undefined ? { model: pending.model } : {}),
+			});
 			if (pending?.thinkingLevel !== undefined) {
 				await backend.setThinkingLevel(pending.thinkingLevel).catch(() => {});
 			}
+		})();
+		try {
+			await record.startPromise;
 		} catch (error) {
 			// §10: a failed materialization removes the record and keeps the
-			// pool intact; other sessions are unaffected.
-			workspaceRecord.sessions.delete(sessionId);
+			// pool intact; other sessions are unaffected. Only delete when the
+			// map still points at this record, so a dispose or workspace switch
+			// that already replaced it never loses its successor.
+			if (workspaceRecord.sessions.get(sessionId) === record) {
+				workspaceRecord.sessions.delete(sessionId);
+			}
 			await backend.stop().catch(() => {});
 			throw error;
 		}
-		if (generation !== this.switchGeneration || this.getBackend(workspace, sessionId) !== backend) {
-			// Superseded while materializing: dispose the orphan.
+		if (
+			generation !== this.switchGeneration ||
+			workspaceRecord.sessions.get(sessionId) !== record ||
+			!backend.isRunning
+		) {
+			// Superseded or disposed while materializing: dispose the orphan.
 			await backend.stop().catch(() => {});
 			const current = this.getBackend(workspace, sessionId);
 			if (current) {
@@ -409,24 +433,57 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		const existing = this.getBackend(workspaceId, sessionId);
 		if (existing) {
 			this.touch(workspaceId, sessionId);
-			return {
+			// Messages and entry ids come from one structural walk of the live
+			// session (single writer), so the pairing is exact.
+			const parts = existing.sessionProjectionParts?.();
+			const snapshot: SessionSnapshot = {
 				state: await existing.getState(),
-				messages: await existing.getMessages(),
+				messages: parts?.messages ?? (await existing.getMessages()),
 				usage: await existing.getSessionUsage().catch(() => null),
 			};
+			if (parts) {
+				snapshot.entryIds = parts.entryIds;
+			}
+			return snapshot;
 		}
-		// Not materialized: history comes from the catalog (Pi's own parser);
-		// model/thinking come from the pending config. No AgentSession is
-		// created here — 500 historical sessions stay out of memory.
+		// Not materialized: ONE projection pass over the catalog file yields
+		// messages, entry ids, persisted state and usage (single read/parse).
+		// No AgentSession is created here — 500 historical sessions stay out
+		// of memory.
 		const session = await this.options.findSession(sessionId);
-		const messages = session?.file ? await this.options.readSessionHistory(session.file) : [];
 		const models = await this.options.hostServices.listModels();
+		const resolveContextWindow = (sessionModel: { provider: string; modelId: string } | null) =>
+			sessionModel
+				? models.find((entry) => entry.provider === sessionModel.provider && entry.id === sessionModel.modelId)
+						?.contextWindow
+				: undefined;
+		let messages: AgentMessage[] = [];
+		let entryIds: Array<string | undefined> | undefined;
+		let usage: SessionUsage | null = null;
+		let projectionModel: ModelInfo | null = null;
+		let projectionThinkingLevel: string | undefined;
+		if (session?.file) {
+			const projection = await this.options.readSessionProjection(session.file, {
+				sessionId,
+				resolveContextWindow,
+			});
+			messages = projection.messages;
+			entryIds = projection.entryIds;
+			usage = projection.usage;
+			projectionModel = projection.model;
+			projectionThinkingLevel = projection.thinkingLevel;
+		}
 		const pending = this.pendingConfigs.get(this.pendingKey(workspaceId, sessionId));
+		// The pending config (an explicit user choice) wins; the projection's
+		// file-recorded state fills the gaps (createAgentSession's restore
+		// path).
 		let model: ModelInfo | null = pending?.model
 			? (models.find((entry) => entry.provider === pending.model?.provider && entry.id === pending.model?.modelId) ??
 				null)
 			: null;
 		let thinkingLevel: string | undefined = pending?.thinkingLevel;
+		model ??= projectionModel;
+		thinkingLevel ??= projectionThinkingLevel;
 		// A fresh (message-less) session has no materialized defaults yet:
 		// predict them so the UI shows the real model and thinking level
 		// before the AgentSession exists, instead of selector fallbacks.
@@ -443,21 +500,6 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 				// Defaults resolution is best-effort; never block opening a session.
 			}
 		}
-		// A historical session restores its file-recorded model and thinking
-		// level on materialization (createAgentSession's restore path): show
-		// them now instead of the selector fallbacks.
-		if (session?.file && (model === null || thinkingLevel === undefined) && this.options.readPersistedSessionState) {
-			try {
-				const persisted = await this.options.readPersistedSessionState(session.file);
-				model ??= persisted.model;
-				thinkingLevel ??= persisted.thinkingLevel;
-			} catch {
-				// Persisted-state resolution is best-effort; never block opening.
-			}
-		}
-		// Historical sessions still report usage: aggregate the JSONL file
-		// instead of waiting for a backend to materialize.
-		const usage = session?.file ? await this.historicalUsage(sessionId) : null;
 		const state: AgentState = {
 			model,
 			isStreaming: false,
@@ -468,7 +510,11 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 			...(session?.name !== undefined ? { sessionName: session.name } : {}),
 			...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
 		};
-		return { state, messages, usage };
+		const snapshot: SessionSnapshot = { state, messages, usage };
+		if (entryIds !== undefined) {
+			snapshot.entryIds = entryIds;
+		}
+		return snapshot;
 	}
 
 	async sendMessage(workspaceId: string, sessionId: string, message: UserMessage): Promise<void> {
@@ -506,29 +552,27 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		if (!backend) {
 			// Not materialized: aggregate the JSONL file instead, so historical
 			// sessions report usage without launching a backend.
-			return this.historicalUsage(sessionId);
+			return this.historicalUsage(sessionId).catch(() => null);
 		}
 		return backend.getSessionUsage().catch(() => null);
 	}
 
-	/** Usage for a session without a live backend, aggregated from its JSONL file. */
+	/** Usage for a session without a live backend, from the one-pass projection. */
 	private async historicalUsage(sessionId: string): Promise<SessionUsage | null> {
 		const session = await this.options.findSession(sessionId);
 		if (!session?.file) {
 			return null;
 		}
 		const models = await this.options.hostServices.listModels();
-		return this.options
-			.readSessionUsage(session.file, {
-				sessionId,
-				resolveContextWindow: (sessionModel) =>
-					sessionModel
-						? models.find(
-								(entry) => entry.provider === sessionModel.provider && entry.id === sessionModel.modelId,
-							)?.contextWindow
-						: undefined,
-			})
-			.catch(() => null);
+		const projection = await this.options.readSessionProjection(session.file, {
+			sessionId,
+			resolveContextWindow: (sessionModel) =>
+				sessionModel
+					? models.find((entry) => entry.provider === sessionModel.provider && entry.id === sessionModel.modelId)
+							?.contextWindow
+					: undefined,
+		});
+		return projection.usage;
 	}
 
 	async setModel(workspaceId: string, sessionId: string, model: ModelRef): Promise<ModelInfo | null> {
@@ -681,9 +725,9 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 
 	/**
 	 * Editable user messages of a session. A live backend answers from its
-	 * own `SessionManager.getBranch()` (same source as `getMessages()`, so
-	 * timestamps align exactly); a not-yet-materialized session is read from
-	 * its catalog file. Returns an empty list for sessions with no file yet.
+	 * own `SessionManager.getBranch()` (same source as `getMessages()`); a
+	 * not-yet-materialized session comes from the one-pass file projection.
+	 * Returns an empty list for sessions with no file yet.
 	 */
 	async listEditableUserMessages(workspaceId: string, sessionId: string): Promise<EditableUserMessage[]> {
 		const backend = this.getBackend(workspaceId, sessionId);
@@ -694,7 +738,16 @@ export class SdkBackendManager implements DesktopAgentRuntime {
 		if (!session?.file) {
 			return [];
 		}
-		return this.options.readEditableUserMessages(session.file);
+		const models = await this.options.hostServices.listModels();
+		const projection = await this.options.readSessionProjection(session.file, {
+			sessionId,
+			resolveContextWindow: (sessionModel) =>
+				sessionModel
+					? models.find((entry) => entry.provider === sessionModel.provider && entry.id === sessionModel.modelId)
+							?.contextWindow
+					: undefined,
+		});
+		return projection.editable;
 	}
 
 	/**

@@ -1,5 +1,3 @@
-import { Icon } from "./Icon.tsx";
-
 export function SessionHome({
 	busy,
 	loading,
@@ -20,7 +18,6 @@ export function SessionHome({
 						: "Choose a conversation from the project list, or open another workspace."}
 				</p>
 				<button type="button" className="btn btn-primary" disabled={busy} onClick={onPickWorkspace}>
-					<Icon name="folder" size={16} />
 					{busy ? "Starting…" : "Open workspace"}
 				</button>
 			</div>

@@ -64,12 +64,19 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 	return "short";
 }
 
+function isOpenAIResponsesEndpoint(baseUrl: string): boolean {
+	try {
+		return new URL(baseUrl).hostname === "api.openai.com";
+	} catch {
+		// Malformed base URL: fall back to the conservative default.
+		return false;
+	}
+}
+
 function detectOpenAIResponsesSupportsDeveloperRole(model: Model<"openai-responses">): boolean {
 	if (model.compat?.supportsDeveloperRole !== undefined) return model.compat.supportsDeveloperRole;
 	// Only OpenAI's own API supports the developer role by default.
-	const baseUrl = model.baseUrl;
-	const isOpenAI = baseUrl.includes("api.openai.com");
-	return isOpenAI;
+	return isOpenAIResponsesEndpoint(model.baseUrl);
 }
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {

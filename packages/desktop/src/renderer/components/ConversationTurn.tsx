@@ -123,7 +123,6 @@ export function ConversationTurn({
 	canEdit = false,
 	onEdit,
 	editing = null,
-	onEditDraft,
 	onEditSend,
 	onEditCancel,
 }: {
@@ -136,12 +135,10 @@ export function ConversationTurn({
 	canEdit?: boolean;
 	/** Request to edit the turn's user message (open the inline editor). */
 	onEdit?: (message: UiMessage) => void;
-	/** Inline editor state when it targets this turn's user message. */
+	/** Edit target and initial text when an edit targets this turn's user message. */
 	editing?: { entryId: string; text: string } | null;
-	/** Update the inline editor's draft. */
-	onEditDraft?: (text: string) => void;
-	/** Commit the edit. */
-	onEditSend?: () => void;
+	/** Commit the edit with the final text. */
+	onEditSend?: (text: string) => void;
 	/** Abandon the edit. */
 	onEditCancel?: () => void;
 }): React.JSX.Element {
@@ -212,7 +209,6 @@ export function ConversationTurn({
 					canEdit={canEdit}
 					onEdit={onEdit}
 					editing={editing !== null && turn.user.entryId === editing.entryId ? editing : null}
-					onEditDraft={onEditDraft}
 					onEditSend={onEditSend}
 					onEditCancel={onEditCancel}
 				/>

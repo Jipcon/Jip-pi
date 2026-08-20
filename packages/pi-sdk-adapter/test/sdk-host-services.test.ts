@@ -228,4 +228,27 @@ describe("SdkHostServices", () => {
 
 		expect(await services.listModelsByIds([])).toEqual([]);
 	});
+
+	test("listModelsByIds falls back to case-insensitive matches without hiding exact hits", async () => {
+		const { runtime } = await createTestRuntime();
+		new ModelRegistry(runtime).registerProvider(
+			fauxProvider({
+				provider: "case-faux",
+				models: [
+					{ id: "Qwen-Plus", name: "Qwen Plus" },
+					{ id: "qwen-plus", name: "Qwen Plus Lower" },
+				],
+			}).provider,
+		);
+		await runtime.refresh({ allowNetwork: false });
+		const services = new SdkHostServices({ agentDir: "C:\\agent", modelRuntime: runtime });
+
+		// No exact entry: the case-insensitive fallback resolves the id.
+		const fallback = await services.listModelsByIds(["QWEN-PLUS"]);
+		expect(fallback.map((model) => model.id).sort()).toEqual(["Qwen-Plus", "qwen-plus"]);
+
+		// With an exact entry present it is served without duplicate noise.
+		const exact = await services.listModelsByIds(["qwen-plus"]);
+		expect(exact.map((model) => model.id)).toEqual(["qwen-plus"]);
+	});
 });

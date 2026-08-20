@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { buildFetchHeaders, buildModelsUrlCandidates, fetchProviderModels } from "../src/main/custom-provider-fetch.ts";
+import {
+	buildFetchHeaders,
+	buildModelsUrlCandidates,
+	FETCH_TIMEOUT_MS,
+	fetchProviderModels,
+	MAX_FETCHED_MODELS,
+	MAX_RESPONSE_BYTES,
+} from "../src/main/custom-provider-fetch.ts";
 
 /** A minimal Response stand-in for the stubbed global fetch. */
 function fakeResponse(status: number, body: string): Response {
@@ -20,6 +27,7 @@ function stubFetch(
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 describe("buildModelsUrlCandidates", () => {
@@ -99,6 +107,24 @@ describe("buildFetchHeaders", () => {
 		const headers = buildFetchHeaders("openai-completions", "");
 		expect(headers.get("Authorization")).toBeNull();
 	});
+
+	test("authHeader forces Bearer even for anthropic", () => {
+		const headers = buildFetchHeaders("anthropic-messages", "ant-key", true);
+		expect(headers.get("Authorization")).toBe("Bearer ant-key");
+		expect(headers.get("x-api-key")).toBeNull();
+	});
+
+	test("custom headers are applied and suppress the default credential header", () => {
+		const headers = buildFetchHeaders("anthropic-messages", "ant-key", false, { "x-api-key": "$CUSTOM" });
+		expect(headers.get("x-api-key")).toBe("$CUSTOM");
+		expect(headers.get("Authorization")).toBeNull();
+	});
+
+	test("custom non-credential headers coexist with the default key header", () => {
+		const headers = buildFetchHeaders("openai-completions", "sk-test", false, { "x-route": "team-a" });
+		expect(headers.get("x-route")).toBe("team-a");
+		expect(headers.get("Authorization")).toBe("Bearer sk-test");
+	});
 });
 
 describe("fetchProviderModels", () => {
@@ -149,6 +175,92 @@ describe("fetchProviderModels", () => {
 		expect(mock).toHaveBeenCalledTimes(1);
 		const init = mock.mock.calls[0][1] as RequestInit;
 		expect(new Headers(init.headers).get("x-api-key")).toBe("ant-key");
+	});
+
+	test("sends the complete connection draft's headers", async () => {
+		const mock = stubFetch(() => fakeResponse(200, JSON.stringify({ data: [] })));
+		await fetchProviderModels({
+			baseUrl: "https://api.example.com",
+			api: "anthropic-messages",
+			apiKey: "ant-key",
+			authHeader: true,
+			headers: { "x-custom": "$TOKEN" },
+		});
+		const sent = new Headers((mock.mock.calls[0][1] as RequestInit).headers);
+		expect(sent.get("Authorization")).toBe("Bearer ant-key");
+		expect(sent.get("x-custom")).toBe("$TOKEN");
+		expect(sent.get("x-api-key")).toBeNull();
+	});
+
+	test("duplicate model ids are deduplicated before reaching the renderer", async () => {
+		stubFetch(() =>
+			fakeResponse(200, JSON.stringify({ data: [{ id: "a" }, { id: "a", display_name: "dup" }, { id: "b" }] })),
+		);
+		const models = await fetchProviderModels({ baseUrl: "https://api.example.com", api: "openai-completions" });
+		expect(models).toEqual([{ id: "a" }, { id: "b" }]);
+	});
+
+	test("responses above the byte limit are rejected", async () => {
+		stubFetch(() => fakeResponse(200, `{"data": [${"x".repeat(MAX_RESPONSE_BYTES)}]}`));
+		await expect(
+			fetchProviderModels({ baseUrl: "https://api.example.com", api: "openai-completions" }),
+		).rejects.toThrow(new RegExp(`exceeds ${MAX_RESPONSE_BYTES}`));
+	});
+
+	test("model lists above the count limit are rejected", async () => {
+		const entries = Array.from({ length: MAX_FETCHED_MODELS + 1 }, (_, index) => ({ id: `m${index}` }));
+		stubFetch(() => fakeResponse(200, JSON.stringify({ data: entries })));
+		await expect(
+			fetchProviderModels({ baseUrl: "https://api.example.com", api: "openai-completions" }),
+		).rejects.toThrow(new RegExp(`at most ${MAX_FETCHED_MODELS}`));
+	});
+
+	test("custom header secrets are redacted from error bodies", async () => {
+		stubFetch(() => fakeResponse(403, "rejected token super-secret-token-value"));
+		await expect(
+			fetchProviderModels({
+				baseUrl: "https://api.example.com",
+				api: "openai-completions",
+				headers: { Authorization: "super-secret-token-value" },
+			}),
+		).rejects.toThrow(/\[REDACTED\]/);
+	});
+
+	test("all candidates share one total deadline instead of one timeout each", async () => {
+		vi.useFakeTimers();
+		// Base with a compat suffix produces three candidates. Candidates 1
+		// and 2 answer 404 after burning real time; candidate 3 hangs until
+		// the shared deadline aborts it. Per-candidate timeouts would need
+		// 3x FETCH_TIMEOUT_MS; the shared deadline finishes in exactly one.
+		let callCount = 0;
+		stubFetch((_url: string, init: RequestInit) => {
+			callCount += 1;
+			const signal = init.signal as AbortSignal;
+			const index = callCount;
+			if (index <= 2) {
+				return new Promise<Response>((resolve, reject) => {
+					const delay = index === 1 ? 10_000 : 4_000;
+					const timer = setTimeout(() => resolve(fakeResponse(404, "nope")), delay);
+					signal.addEventListener("abort", () => {
+						clearTimeout(timer);
+						reject(new Error("aborted"));
+					});
+				});
+			}
+			return new Promise<Response>((_resolve, reject) => {
+				signal.addEventListener("abort", () => reject(new Error("aborted")));
+			});
+		});
+		const promise = fetchProviderModels({
+			baseUrl: "https://api.deepseek.com/anthropic",
+			api: "openai-completions",
+		});
+		// Attach a handler before advancing timers so the synchronous
+		// rejection is never reported as unhandled.
+		const settled = promise.catch((error) => error);
+		await vi.advanceTimersByTimeAsync(FETCH_TIMEOUT_MS + 500);
+		expect(await settled).toMatchObject({ message: `Request timed out after ${FETCH_TIMEOUT_MS}ms` });
+		expect(callCount).toBe(3);
 	});
 
 	test("falls through 404/405 to the next candidate", async () => {

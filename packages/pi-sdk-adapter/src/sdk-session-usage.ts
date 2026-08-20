@@ -79,7 +79,9 @@ function addTotals(totals: Totals, usage: Usage): void {
 }
 
 /**
- * Read the full usage of a persisted JSONL session.
+ * Aggregate session usage from already-parsed entries (no file access).
+ * Shared by the file-reading entry point and the one-pass session
+ * projection, so usage never needs its own read/parse of the JSONL.
  *
  * Token/cost totals aggregate every session entry (including entries that
  * were compacted away), matching getSessionStats(). Context usage mirrors
@@ -88,11 +90,11 @@ function addTotals(totals: Totals, usage: Usage): void {
  * messages. The context window comes from the caller-provided model catalog
  * lookup, so a session whose model is unknown simply omits contextUsage.
  */
-export async function readSessionUsage(filePath: string, options: ReadSessionUsageOptions): Promise<SessionUsage> {
-	const sdk = await loadSdk();
-	const content = await readFile(filePath, "utf8");
-	const entries = sdk.parseSessionEntries(content).filter((entry): entry is SessionEntry => entry.type !== "session");
-
+export function computeSessionUsageFromEntries(
+	sdk: Awaited<ReturnType<typeof loadSdk>>,
+	entries: readonly SessionEntry[],
+	options: ReadSessionUsageOptions,
+): SessionUsage {
 	// Valid assistant usage: not aborted/error and with real context tokens.
 	const validAssistantUsage = (message: AgentMessage): Usage | undefined => {
 		if (message.role !== "assistant") {
@@ -143,13 +145,23 @@ export async function readSessionUsage(filePath: string, options: ReadSessionUsa
 	};
 
 	// Context usage: resolve the branch the same way the runtime does.
-	const context = sdk.buildSessionContext(entries);
+	const context = sdk.buildSessionContext([...entries]);
 	const contextWindow = options.resolveContextWindow(context.model);
 	if (contextWindow !== undefined && contextWindow > 0) {
-		usage.contextUsage = computeContextUsage(sdk, entries, context.messages, contextWindow, validAssistantUsage);
+		usage.contextUsage = computeContextUsage(sdk, [...entries], context.messages, contextWindow, validAssistantUsage);
 	}
 
 	return usage;
+}
+
+/**
+ * Read the full usage of a persisted JSONL session.
+ */
+export async function readSessionUsage(filePath: string, options: ReadSessionUsageOptions): Promise<SessionUsage> {
+	const sdk = await loadSdk();
+	const content = await readFile(filePath, "utf8");
+	const entries = sdk.parseSessionEntries(content).filter((entry): entry is SessionEntry => entry.type !== "session");
+	return computeSessionUsageFromEntries(sdk, entries, options);
 }
 
 function computeContextUsage(

@@ -1,22 +1,17 @@
 /**
- * AgentHost: shared session catalog cache and SDK-backed session file
- * operations used by the backend managers and the IPC wiring.
+ * AgentHost: shared session catalog cache and SDK-backed session identity
+ * creation used by the backend managers and the IPC wiring.
  *
  * The catalog is disk-only: it never creates runtime backends for display.
- * Full history and session identity creation delegate to Pi's own parsing
- * and SessionManager through the SDK adapter.
+ * Session identity creation delegates to Pi's own SessionManager through
+ * the SDK adapter; historical content reads go through the one-pass session
+ * projection wired in main.ts.
  */
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { AgentMessage, EditableUserMessage, SessionInfo, SessionUsage } from "@earendil-works/pi-agent-protocol";
-import {
-	createSessionFile as createSessionFileWithSdk,
-	type ReadSessionUsageOptions,
-	readEditableUserMessages as readEditableUserMessagesWithSdk,
-	readSessionHistory as readSessionHistoryWithSdk,
-	readSessionUsage as readSessionUsageWithSdk,
-} from "@earendil-works/pi-sdk-adapter";
+import type { SessionInfo } from "@earendil-works/pi-agent-protocol";
+import { createSessionFile as createSessionFileWithSdk } from "@earendil-works/pi-sdk-adapter";
 
 export interface AgentHostOptions {
 	listCatalog(): Promise<SessionInfo[]>;
@@ -57,19 +52,6 @@ export class AgentHost {
 		return (await this.listSessions()).find((session) => session.id === sessionId) ?? null;
 	}
 
-	/** Full message history of a persisted session through Pi's own parser. */
-	readSessionHistory(filePath: string): Promise<AgentMessage[]> {
-		return readSessionHistoryWithSdk(filePath);
-	}
-
-	/**
-	 * Token/cost totals and context usage for a persisted session, computed
-	 * from the JSONL file without a live backend.
-	 */
-	readSessionUsage(filePath: string, options: ReadSessionUsageOptions): Promise<SessionUsage> {
-		return readSessionUsageWithSdk(filePath, options);
-	}
-
 	/** Create a persisted session identity through the SDK SessionManager. */
 	createSessionFile(workspacePath: string, sessionDir?: string): Promise<{ sessionId: string; sessionFile: string }> {
 		return createSessionFileWithSdk(workspacePath, sessionDir);
@@ -79,10 +61,5 @@ export class AgentHost {
 	async renameCatalogSession(sessionId: string, name: string): Promise<void> {
 		await this.options.renameCatalogSession(sessionId, name);
 		this.invalidate();
-	}
-
-	/** Read the editable user messages of a persisted session (no live backend). */
-	readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]> {
-		return readEditableUserMessagesWithSdk(filePath);
 	}
 }

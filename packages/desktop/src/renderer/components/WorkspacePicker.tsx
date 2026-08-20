@@ -2,8 +2,6 @@
  * WorkspacePicker: shown when no workspace is open.
  */
 
-import { Icon } from "./Icon.tsx";
-
 export function WorkspacePicker({
 	busy,
 	error,
@@ -31,7 +29,6 @@ export function WorkspacePicker({
 					onClick={onPick}
 					data-testid="pick-workspace-button"
 				>
-					<Icon name="folder" size={17} />
 					{busy ? "Starting…" : "Open workspace"}
 				</button>
 				<p className="workspace-picker-note">The selected folder becomes the agent's working directory.</p>

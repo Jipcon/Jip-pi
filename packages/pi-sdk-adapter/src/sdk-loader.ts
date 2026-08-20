@@ -36,9 +36,13 @@ export interface SdkExports {
 	DEFAULT_THINKING_LEVEL: SdkModule["DEFAULT_THINKING_LEVEL"];
 	parseSessionEntries: SdkModule["parseSessionEntries"];
 	buildSessionContext: SdkModule["buildSessionContext"];
+	buildContextEntries: SdkModule["buildContextEntries"];
+	buildSessionPath: SdkModule["buildSessionPath"];
+	sessionEntryToContextMessages: SdkModule["sessionEntryToContextMessages"];
 	getLatestCompactionEntry: SdkModule["getLatestCompactionEntry"];
 	estimateTokens: SdkModule["estimateTokens"];
 	calculateContextTokens: SdkModule["calculateContextTokens"];
+	validateModelsJsonContent: SdkModule["validateModelsJsonContent"];
 	VERSION: string;
 }
 
@@ -51,9 +55,13 @@ const sdkPromise: Promise<SdkExports> = import("@earendil-works/pi-coding-agent"
 	DEFAULT_THINKING_LEVEL: module.DEFAULT_THINKING_LEVEL,
 	parseSessionEntries: module.parseSessionEntries,
 	buildSessionContext: module.buildSessionContext,
+	buildContextEntries: module.buildContextEntries,
+	buildSessionPath: module.buildSessionPath,
+	sessionEntryToContextMessages: module.sessionEntryToContextMessages,
 	getLatestCompactionEntry: module.getLatestCompactionEntry,
 	estimateTokens: module.estimateTokens,
 	calculateContextTokens: module.calculateContextTokens,
+	validateModelsJsonContent: module.validateModelsJsonContent,
 	VERSION: module.VERSION,
 }));
 

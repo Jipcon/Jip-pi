@@ -14,11 +14,7 @@ const SESSION_A = "session-a";
 const SESSION_B = "session-b";
 const WORKSPACE = "C:\\work";
 
-function snapshotAction(
-	sessionId: string,
-	messages: AgentMessage[] = [],
-	editableUserMessages?: { entryId: string; text: string; timestamp?: number }[],
-) {
+function snapshotAction(sessionId: string, messages: AgentMessage[] = [], entryIds?: Array<string | undefined>) {
 	return {
 		type: "session-snapshot" as const,
 		workspaceId: WORKSPACE,
@@ -32,7 +28,7 @@ function snapshotAction(
 		messages,
 		usage: null,
 		thinkingLevels: ["off", "medium", "high"],
-		...(editableUserMessages !== undefined ? { editableUserMessages } : {}),
+		...(entryIds !== undefined ? { entryIds } : {}),
 	};
 }
 
@@ -323,8 +319,8 @@ describe("store reducer (per-session)", () => {
 	});
 });
 
-describe("editable user message alignment", () => {
-	test("session-snapshot aligns entry ids by exact timestamp", () => {
+describe("editable user message entry ids", () => {
+	test("session-snapshot assigns structurally paired entry ids", () => {
 		let state = makeState();
 		state = reducer(
 			state,
@@ -335,10 +331,7 @@ describe("editable user message alignment", () => {
 					{ role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 150 },
 					{ role: "user", content: "second", timestamp: 200 },
 				],
-				[
-					{ entryId: "e1", text: "first", timestamp: 100 },
-					{ entryId: "e2", text: "second", timestamp: 200 },
-				],
+				["e1", undefined, "e2"],
 			),
 		);
 		const messages = state.sessionStateById[SESSION_A].messages;
@@ -348,7 +341,7 @@ describe("editable user message alignment", () => {
 		expect(messages[2]).toMatchObject({ role: "user", entryId: "e2" });
 	});
 
-	test("same-timestamp user messages disambiguate by order", () => {
+	test("user messages with identical timestamps keep their own entry ids", () => {
 		let state = makeState();
 		state = reducer(
 			state,
@@ -359,73 +352,60 @@ describe("editable user message alignment", () => {
 					{ role: "user", content: "b", timestamp: 500 },
 					{ role: "user", content: "c", timestamp: 500 },
 				],
-				[
-					{ entryId: "e-1", text: "a", timestamp: 500 },
-					{ entryId: "e-2", text: "b", timestamp: 500 },
-					{ entryId: "e-3", text: "c", timestamp: 500 },
-				],
+				["e-1", "e-2", "e-3"],
 			),
 		);
 		const messages = state.sessionStateById[SESSION_A].messages;
 		expect(messages.map((message) => message.entryId)).toEqual(["e-1", "e-2", "e-3"]);
 	});
 
-	test("messages without a matching entry lose their stale entry id", () => {
+	test("editable_messages_added assigns only the new ids and never touches other state", () => {
 		let state = makeState();
 		state = reducer(
 			state,
-			snapshotAction(
-				SESSION_A,
-				[
-					{ role: "user", content: "kept", timestamp: 100 },
-					{ role: "user", content: "gone", timestamp: 200 },
-				],
-				[
-					{ entryId: "e1", text: "kept", timestamp: 100 },
-					{ entryId: "e2", text: "gone", timestamp: 200 },
-				],
-			),
+			snapshotAction(SESSION_A, [
+				{ role: "user", content: "hello", timestamp: 10 },
+				{ role: "assistant", content: [{ type: "text", text: "hi" }], timestamp: 20 },
+			]),
 		);
-		expect(state.sessionStateById[SESSION_A].messages.map((message) => message.entryId)).toEqual(["e1", "e2"]);
-
-		// A later refresh no longer reports e2 (e.g. it landed on an abandoned
-		// branch): its entry id must be cleared, e1 stays.
-		state = reducer(state, {
-			type: "session-editable-messages",
-			sessionId: SESSION_A,
-			editableUserMessages: [{ entryId: "e1", text: "kept", timestamp: 100 }],
-		});
-		expect(state.sessionStateById[SESSION_A].messages.map((message) => message.entryId)).toEqual(["e1", undefined]);
-
-		// An empty editable list clears every entry id.
-		state = reducer(state, {
-			type: "session-editable-messages",
-			sessionId: SESSION_A,
-			editableUserMessages: [],
-		});
-		expect(state.sessionStateById[SESSION_A].messages.map((message) => message.entryId)).toEqual([
-			undefined,
-			undefined,
-		]);
-	});
-
-	test("session-editable-messages realigns without touching other state", () => {
-		let state = makeState();
-		state = reducer(state, snapshotAction(SESSION_A, [{ role: "user", content: "hello", timestamp: 10 }]));
 		expect(state.sessionStateById[SESSION_A].messages[0].entryId).toBeUndefined();
 
-		state = reducer(state, {
-			type: "session-editable-messages",
-			sessionId: SESSION_A,
-			editableUserMessages: [{ entryId: "e1", text: "hello", timestamp: 10 }],
-		});
+		state = reducer(
+			state,
+			routed(WORKSPACE, SESSION_A, {
+				type: "editable_messages_added",
+				entries: [{ entryId: "e1", text: "hello", timestamp: 10 }],
+			}),
+		);
 		expect(state.sessionStateById[SESSION_A].messages[0].entryId).toBe("e1");
+
+		// A second delta only fills messages that still lack an id.
+		state = reducer(
+			state,
+			snapshotAction(SESSION_B, [
+				{ role: "user", content: "old", timestamp: 1 },
+				{ role: "user", content: "new", timestamp: 2 },
+			]),
+		);
+		state = reducer(
+			state,
+			routed(WORKSPACE, SESSION_B, {
+				type: "editable_messages_added",
+				entries: [{ entryId: "b2", text: "new", timestamp: 2 }],
+			}),
+		);
+		// One entry, two unassigned messages: chronological order assigns it
+		// to the first one still missing an id.
+		expect(state.sessionStateById[SESSION_B].messages.map((message) => message.entryId)).toEqual(["b2", undefined]);
+
 		// Unknown sessions are a no-op.
-		const unchanged = reducer(state, {
-			type: "session-editable-messages",
-			sessionId: "missing",
-			editableUserMessages: [],
-		});
+		const unchanged = reducer(
+			state,
+			routed(WORKSPACE, "missing", {
+				type: "editable_messages_added",
+				entries: [{ entryId: "x", text: "x" }],
+			}),
+		);
 		expect(unchanged).toBe(state);
 	});
 });
@@ -443,16 +423,13 @@ describe("inline message editing", () => {
 					{ role: "user", content: "second", timestamp: 200 },
 					{ role: "assistant", content: [{ type: "text", text: "another" }], timestamp: 250 },
 				],
-				[
-					{ entryId: "e1", text: "first", timestamp: 100 },
-					{ entryId: "e2", text: "second", timestamp: 200 },
-				],
+				["e1", undefined, "e2", undefined],
 			),
 		);
 		return state;
 	}
 
-	test("start, draft and cancel manage the editor without touching messages", () => {
+	test("start and cancel manage the editor without touching messages", () => {
 		let state = editingState();
 		const before = state.sessionStateById[SESSION_A];
 
@@ -464,13 +441,6 @@ describe("inline message editing", () => {
 		});
 		expect(state.sessionStateById[SESSION_A].editing).toEqual({ entryId: "e2", text: "second" });
 		expect(state.sessionStateById[SESSION_A].messages).toBe(before.messages);
-
-		state = reducer(state, { type: "session-edit-draft", sessionId: SESSION_A, text: "second (edited)" });
-		expect(state.sessionStateById[SESSION_A].editing).toEqual({ entryId: "e2", text: "second (edited)" });
-
-		// Drafting without an open editor is a no-op.
-		const unchanged = reducer(state, { type: "session-edit-draft", sessionId: SESSION_B, text: "x" });
-		expect(unchanged).toBe(state);
 
 		state = reducer(state, { type: "session-edit-cancel", sessionId: SESSION_A });
 		expect(state.sessionStateById[SESSION_A].editing).toBeNull();
@@ -502,21 +472,9 @@ describe("inline message editing", () => {
 					},
 					{ role: "tool", toolCallId: "call-4", toolName: "read", content: "file body", timestamp: 260 },
 				],
-				[
-					{ entryId: "e1", text: "first", timestamp: 100 },
-					{ entryId: "e2", text: "second", timestamp: 200 },
-				],
+				["e1", undefined, undefined, "e2", undefined, undefined],
 			),
 		);
-		// Historical tool results land in the tools record via the snapshot.
-		state = reducer(state, {
-			type: "session-editable-messages",
-			sessionId: SESSION_A,
-			editableUserMessages: [
-				{ entryId: "e1", text: "first", timestamp: 100 },
-				{ entryId: "e2", text: "second", timestamp: 200 },
-			],
-		});
 
 		state = reducer(state, {
 			type: "session-edit-start",

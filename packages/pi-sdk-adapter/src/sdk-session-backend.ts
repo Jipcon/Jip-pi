@@ -28,13 +28,15 @@ import type {
 import type {
 	AgentSession,
 	ModelRuntime,
+	ResourceLoader,
 	SessionManager,
 	SettingsManager,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { loadSdk } from "./sdk-loader.ts";
+import { loadSdk, type SdkExports } from "./sdk-loader.ts";
 import {
 	normalizeSdkEvent,
+	normalizeSdkMessage,
 	normalizeSdkMessages,
 	normalizeSdkModel,
 	normalizeSdkState,
@@ -53,6 +55,8 @@ export interface SdkSessionBackendOptions {
 	sessionManager?: SessionManager;
 	/** SettingsManager override (tests). */
 	settingsManager?: SettingsManager;
+	/** Resource loader override carrying inline extensions (tests). */
+	resourceLoader?: ResourceLoader;
 }
 
 interface PendingInteraction {
@@ -71,6 +75,9 @@ export class SdkSessionBackend implements AgentSessionBackend {
 	private sessionManager: SessionManager | undefined;
 	private unsubscribeSession: (() => void) | undefined;
 	private modelFallbackMessage: string | undefined;
+	private sdk: SdkExports | undefined;
+	/** Entry ids already reported to the host (delta tracking for editables). */
+	private reportedEditableIds = new Set<string>();
 
 	constructor(options: SdkSessionBackendOptions) {
 		this.options = options;
@@ -135,9 +142,17 @@ export class SdkSessionBackend implements AgentSessionBackend {
 			sessionManager,
 			model:
 				config.model !== undefined ? modelRuntime.getModel(config.model.provider, config.model.modelId) : undefined,
+			...(this.options.resourceLoader !== undefined ? { resourceLoader: this.options.resourceLoader } : {}),
 		});
 		this.session = session;
 		this.modelFallbackMessage = modelFallbackMessage;
+		this.sdk = sdk;
+		// Seed the delta tracker with the branch's existing editable entries:
+		// the host already received those through its open-time snapshot, so
+		// only entries appended afterwards are ever emitted as deltas.
+		this.reportedEditableIds = new Set(
+			extractEditableUserMessages(sessionManager.getBranch()).map((entry) => entry.entryId),
+		);
 
 		// The subscriber is wired before bindExtensions so extension UI
 		// requests raised during extension startup are observable.
@@ -146,6 +161,9 @@ export class SdkSessionBackend implements AgentSessionBackend {
 				const normalized = normalizeSdkEvent(event);
 				if (normalized) {
 					this.emit(normalized);
+					if (normalized.type === "agent_stopped") {
+						this.emitEditableDelta();
+					}
 				}
 			} catch {
 				// §15.1: a throwing event consumer must not break the session's
@@ -310,8 +328,7 @@ export class SdkSessionBackend implements AgentSessionBackend {
 	/**
 	 * Editable user messages on the current leaf path. Sourced from the
 	 * live `SessionManager.getBranch()`, so the embedded `AgentMessage`
-	 * objects are the same ones `getMessages()` reports: timestamps match
-	 * exactly and the renderer can align `entryId`s to rendered messages.
+	 * objects are the same ones `getMessages()` reports.
 	 */
 	editableUserMessages(): EditableUserMessage[] {
 		const manager = this.requireSessionManager();
@@ -319,39 +336,72 @@ export class SdkSessionBackend implements AgentSessionBackend {
 	}
 
 	/**
-	 * Edit a past user message and resend it in place: `navigateTree` moves
-	 * the session's leaf before the edited message (an in-file branch — the
-	 * old continuation stays in the file but leaves the active context),
-	 * then the edited text is queued as a new prompt. Cancelling only
-	 * happens through a `session_before_tree` extension veto (or an aborted
-	 * summarization); nothing is mutated in that case. When the prompt is
-	 * rejected before anything was appended, the previous leaf is restored
-	 * so the original branch stays visible.
+	 * Messages and stable entry ids of the live session, structurally paired:
+	 * both derive from the SessionManager's own compaction-aware context
+	 * entries (single writer), so the association is exact and never guessed
+	 * from timestamps. Entry ids are only carried by user messages.
+	 */
+	sessionProjectionParts(): {
+		messages: AgentMessage[];
+		entryIds: Array<string | undefined>;
+		editable: EditableUserMessage[];
+	} {
+		const manager = this.requireSessionManager();
+		const sdk = this.sdk;
+		const messages: AgentMessage[] = [];
+		const entryIds: Array<string | undefined> = [];
+		if (sdk) {
+			for (const entry of manager.buildContextEntries()) {
+				const entryMessages = entry.type === "message" ? [entry.message] : sdk.sessionEntryToContextMessages(entry);
+				for (const message of entryMessages) {
+					const normalized = normalizeSdkMessage(message);
+					if (normalized === null) continue;
+					messages.push(normalized);
+					entryIds.push(entry.type === "message" && entry.message.role === "user" ? entry.id : undefined);
+				}
+			}
+		}
+		return { messages, entryIds, editable: extractEditableUserMessages(manager.getBranch()) };
+	}
+
+	/**
+	 * Emit newly editable user messages since the last report (delta only).
+	 * Runs after every settled agent run: the just-completed turn's user
+	 * message gains its entry id on disk and becomes editable without the
+	 * host re-scanning or re-transmitting the full history.
+	 */
+	private emitEditableDelta(): void {
+		const manager = this.sessionManager;
+		if (!manager) {
+			return;
+		}
+		try {
+			const current = extractEditableUserMessages(manager.getBranch());
+			const added = current.filter((entry) => !this.reportedEditableIds.has(entry.entryId));
+			this.reportedEditableIds = new Set(current.map((entry) => entry.entryId));
+			if (added.length > 0) {
+				this.emit({ type: "editable_messages_added", entries: added });
+			}
+		} catch {
+			// Editability deltas are best-effort; the edit button simply stays
+			// hidden until the next snapshot.
+		}
+	}
+
+	/**
+	 * Edit a past user message and resend it in place, atomically: the
+	 * session seam (AgentSession.editAndResend) performs locate, switch,
+	 * prompt and rollback. The commit point is prompt acceptance; anything
+	 * failing earlier restores the original leaf exactly, an extension veto
+	 * cancels without mutating the session, and the old continuation stays in
+	 * the file while leaving the active context.
 	 */
 	async editAndResend(entryId: string, text: string): Promise<EditAndResendResult> {
 		const session = this.requireSession();
 		if (session.isStreaming) {
 			throw new Error("Wait for the current response to finish before editing a message");
 		}
-		const oldLeafId = this.requireSessionManager().getLeafId();
-		const navigation = await session.navigateTree(entryId);
-		if (navigation.cancelled) {
-			return { status: "cancelled" };
-		}
-		try {
-			await this.promptRpc(session, text);
-		} catch (error) {
-			// Nothing was appended (the prompt was rejected before queueing):
-			// restore the previous leaf so the original branch stays active. A
-			// trailing user-message leaf cannot be restored exactly through
-			// navigateTree (its user-target semantics re-parent by design), but
-			// the entry stays in the file either way.
-			if (oldLeafId !== null) {
-				await session.navigateTree(oldLeafId).catch(() => {});
-			}
-			throw error instanceof Error ? error : new Error(String(error));
-		}
-		return { status: "sent" };
+		return session.editAndResend(entryId, text);
 	}
 
 	// -----------------------------------------------------------------------

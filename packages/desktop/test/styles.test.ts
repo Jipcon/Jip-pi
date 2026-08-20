@@ -23,8 +23,8 @@ describe("fixed application palette", () => {
 	});
 
 	test("keeps native Windows title-bar controls aligned with the renderer palette", () => {
-		expect(mainProcess).toContain('backgroundColor: "#080808"');
-		expect(mainProcess).toContain('color: "#101010"');
+		expect(mainProcess).toContain('backgroundColor: "#121416"');
+		expect(mainProcess).toContain('color: "#191c1f"');
 		expect(mainProcess).toContain('symbolColor: "#c7c7c7"');
 	});
 

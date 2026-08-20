@@ -103,7 +103,7 @@ export interface SessionUIState {
 	/** openSession completed for this session (history loaded). */
 	loaded: boolean;
 	error: string | null;
-	/** Inline user-message edit in progress (draft text included). */
+	/** Inline user-message edit in progress: edit target and initial text (the draft stays editor-local). */
 	editing: { entryId: string; text: string } | null;
 	nextId: number;
 }
@@ -161,7 +161,8 @@ export type StoreAction =
 			messages: AgentMessage[];
 			usage: SessionUsage | null;
 			thinkingLevels: string[];
-			editableUserMessages?: EditableUserMessage[];
+			/** Stable entry ids parallel to `messages` (structural pairing). */
+			entryIds?: Array<string | undefined>;
 	  }
 	| {
 			type: "session-state-update";
@@ -170,7 +171,6 @@ export type StoreAction =
 			usage: SessionUsage | null;
 			thinkingLevels?: string[];
 	  }
-	| { type: "session-editable-messages"; sessionId: string; editableUserMessages: EditableUserMessage[] }
 	| { type: "session-open-failed"; sessionId: string; error: string }
 	| { type: "active-session"; sessionId: string | null }
 	| { type: "sessions"; sessions: SessionInfo[] }
@@ -179,7 +179,6 @@ export type StoreAction =
 	| { type: "session-catalog-failed" }
 	| { type: "notify"; notification: Omit<NotificationItem, "id"> }
 	| { type: "session-edit-start"; sessionId: string; entryId: string; text: string }
-	| { type: "session-edit-draft"; sessionId: string; text: string }
 	| { type: "session-edit-cancel"; sessionId: string }
 	| { type: "session-edit-commit"; sessionId: string; entryId: string }
 	| { type: "clear-error" }
@@ -237,13 +236,14 @@ function diagnosticsFromMessage(state: AppState, message: AgentMessage): Diagnos
 	return next.length > MAX_DIAGNOSTICS ? next.slice(next.length - MAX_DIAGNOSTICS) : next;
 }
 
-function normalizeUserMessage(message: AgentMessage): UiMessage {
+function normalizeUserMessage(message: AgentMessage, entryId?: string): UiMessage {
 	return {
 		id: `user-${Math.random().toString(36).slice(2, 10)}`,
 		role: "user",
 		blocks: typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content,
 		timestamp: message.timestamp,
 		complete: true,
+		...(entryId !== undefined ? { entryId } : {}),
 	};
 }
 
@@ -264,52 +264,22 @@ function normalizeAssistantMessage(message: AgentMessage, id: string, complete: 
 }
 
 /**
- * Align `entryId`s from `listEditableUserMessages` onto rendered user
- * messages by exact timestamp, disambiguating same-timestamp entries by
- * their relative order (both lists are chronological). Messages without a
- * matching editable entry lose any stale `entryId`. Returns the same array
- * reference when nothing changed so memoized components can bail out.
+ * Assign newly editable entry ids onto rendered user messages that do not
+ * have one yet. Both lists are chronological, so positional assignment is
+ * deterministic — no timestamp matching is involved.
  */
-function alignEntryIds(messages: UiMessage[], editable: readonly EditableUserMessage[]): UiMessage[] {
-	if (editable.length === 0) {
-		let changed = false;
-		const cleared = messages.map((message) => {
-			if (message.role === "user" && message.entryId !== undefined) {
-				changed = true;
-				return { ...message, entryId: undefined };
-			}
-			return message;
-		});
-		return changed ? cleared : messages;
+function applyEditableDelta(messages: UiMessage[], entries: readonly EditableUserMessage[]): UiMessage[] {
+	if (entries.length === 0) {
+		return messages;
 	}
-	// Per-timestamp queues preserve the editable list's order for ordinal matches.
-	const queuesByTimestamp = new Map<number, EditableUserMessage[]>();
-	for (const entry of editable) {
-		if (entry.timestamp === undefined) continue;
-		const queue = queuesByTimestamp.get(entry.timestamp);
-		if (queue !== undefined) {
-			queue.push(entry);
-		} else {
-			queuesByTimestamp.set(entry.timestamp, [entry]);
-		}
-	}
+	let nextEntry = 0;
 	let changed = false;
 	const result = messages.map((message) => {
-		if (message.role !== "user" || message.timestamp === undefined) {
+		if (message.role !== "user" || message.entryId !== undefined || nextEntry >= entries.length) {
 			return message;
 		}
-		const queue = queuesByTimestamp.get(message.timestamp);
-		const matched = queue?.shift();
-		if (matched) {
-			if (message.entryId !== matched.entryId) {
-				changed = true;
-				return { ...message, entryId: matched.entryId };
-			}
-		} else if (message.entryId !== undefined) {
-			changed = true;
-			return { ...message, entryId: undefined };
-		}
-		return message;
+		changed = true;
+		return { ...message, entryId: entries[nextEntry++].entryId };
 	});
 	return changed ? result : messages;
 }
@@ -398,15 +368,17 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 			const session =
 				state.sessionStateById[action.state.sessionId] ??
 				emptySessionState(action.workspaceId, action.state.sessionId);
-			const renderableMessages = action.messages.filter(
-				(message) => message.role === "user" || message.role === "assistant",
-			);
-			const messages = renderableMessages.map((message, index) =>
-				message.role === "user"
-					? normalizeUserMessage(message)
-					: normalizeAssistantMessage(message, `m-${session.nextId + index}`, true),
-			);
-			const aligned = alignEntryIds(messages, action.editableUserMessages ?? []);
+			// Entry ids arrive structurally paired with the snapshot messages
+			// (one projection pass on the backend), so the association is
+			// exact and survives identical timestamps.
+			const messages: UiMessage[] = [];
+			action.messages.forEach((message, index) => {
+				if (message.role === "user") {
+					messages.push(normalizeUserMessage(message, action.entryIds?.[index]));
+				} else if (message.role === "assistant") {
+					messages.push(normalizeAssistantMessage(message, `m-${session.nextId + index}`, true));
+				}
+			});
 			let diagnostics = state.diagnostics;
 			for (const message of action.messages) {
 				diagnostics = diagnosticsFromMessage({ ...state, diagnostics }, message);
@@ -419,7 +391,7 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 					[action.state.sessionId]: {
 						...session,
 						agentState: action.state,
-						messages: aligned,
+						messages,
 						tools: normalizeHistoricalTools(action.messages),
 						thinkingLevels: action.thinkingLevels,
 						interactions: [],
@@ -448,24 +420,6 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 						sessionUsage: action.usage,
 						...(action.thinkingLevels !== undefined ? { thinkingLevels: action.thinkingLevels } : {}),
 					},
-				},
-			};
-		}
-
-		case "session-editable-messages": {
-			const session = state.sessionStateById[action.sessionId];
-			if (!session) {
-				return state;
-			}
-			const aligned = alignEntryIds(session.messages, action.editableUserMessages);
-			if (aligned === session.messages) {
-				return state;
-			}
-			return {
-				...state,
-				sessionStateById: {
-					...state.sessionStateById,
-					[action.sessionId]: { ...session, messages: aligned },
 				},
 			};
 		}
@@ -506,20 +460,6 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 				sessionStateById: {
 					...state.sessionStateById,
 					[action.sessionId]: { ...session, editing: { entryId: action.entryId, text: action.text } },
-				},
-			};
-		}
-
-		case "session-edit-draft": {
-			const session = state.sessionStateById[action.sessionId];
-			if (!session?.editing) {
-				return state;
-			}
-			return {
-				...state,
-				sessionStateById: {
-					...state.sessionStateById,
-					[action.sessionId]: { ...session, editing: { ...session.editing, text: action.text } },
 				},
 			};
 		}
@@ -681,6 +621,25 @@ export function reducer(state: AppState, action: StoreAction): AppState {
 						20,
 					),
 					nextId: state.nextId + 1,
+				};
+			}
+			if (action.event.type === "editable_messages_added") {
+				// Delta only: newly editable entries gain their entry ids without
+				// the full history text ever being re-sent or re-scanned.
+				const session = state.sessionStateById[action.sessionId];
+				if (!session) {
+					return state;
+				}
+				const messages = applyEditableDelta(session.messages, action.event.entries);
+				if (messages === session.messages) {
+					return state;
+				}
+				return {
+					...state,
+					sessionStateById: {
+						...state.sessionStateById,
+						[action.sessionId]: { ...session, messages },
+					},
 				};
 			}
 			const session =

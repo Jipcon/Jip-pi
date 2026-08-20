@@ -1,4 +1,5 @@
 export type IconName =
+	| "arrow-up"
 	| "check"
 	| "chevron-right"
 	| "close"
@@ -9,7 +10,6 @@ export type IconName =
 	| "folder-plus"
 	| "message"
 	| "plus"
-	| "send"
 	| "settings"
 	| "sparkles"
 	| "stop"
@@ -38,6 +38,15 @@ const BASE_STROKE_WIDTH = 1.2;
 const SETTINGS_SCALE = 0.6;
 
 const ICONS: Record<IconName, IconDefinition> = {
+	"arrow-up": {
+		content: (
+			<g strokeWidth={2.5}>
+				<path d="M12 19.5V4.5" />
+				<path d="m5.5 10 6.5-6 6.5 6" />
+			</g>
+		),
+	},
+
 	check: {
 		content: <path d="m5 12 4 4L19 6" />,
 	},
@@ -113,15 +122,6 @@ const ICONS: Record<IconName, IconDefinition> = {
 		),
 	},
 
-	send: {
-		content: (
-			<>
-				<path d="m4 4 17 8-17 8 3-8-3-8Z" />
-				<path d="M7 12h14" />
-			</>
-		),
-	},
-
 	settings: {
 		overflow: "visible",
 		content: (
@@ -156,7 +156,7 @@ const ICONS: Record<IconName, IconDefinition> = {
 	},
 
 	stop: {
-		content: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
+		content: <rect x="7" y="7" width="10" height="10" rx="1.8" fill="currentColor" stroke="none" />,
 	},
 
 	terminal: {

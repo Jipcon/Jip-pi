@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { CustomProviderConfig, CustomProviderMatchedModel } from "../src/shared/ipc.ts";
 import * as hooks from "../src/renderer/state/hooks.ts";
@@ -8,7 +8,7 @@ import { Composer } from "../src/renderer/components/Composer.tsx";
 import { MarkdownContent } from "../src/renderer/components/MarkdownContent.tsx";
 import { ChatView } from "../src/renderer/components/ChatView.tsx";
 import { GenericToolRenderer } from "../src/renderer/components/GenericToolRenderer.tsx";
-import { MessageItem } from "../src/renderer/components/MessageItem.tsx";
+import { AssistantMessageContent, MessageItem } from "../src/renderer/components/MessageItem.tsx";
 import { CustomProviderDialog } from "../src/renderer/components/settings/CustomProviderDialog.tsx";
 import { CustomProvidersSection } from "../src/renderer/components/settings/CustomProvidersSection.tsx";
 import { SettingsPanel } from "../src/renderer/components/SettingsPanel.tsx";
@@ -83,10 +83,10 @@ describe("GenericToolRenderer", () => {
 	});
 });
 
-describe("MessageItem", () => {
+describe("AssistantMessageContent", () => {
 	test("shows compact tool status and hides output by default", () => {
 		const { container } = render(
-			<MessageItem
+			<AssistantMessageContent
 				message={{
 					id: "m1",
 					role: "assistant",
@@ -106,7 +106,7 @@ describe("MessageItem", () => {
 
 	test("shows full tool details when enabled", () => {
 		render(
-			<MessageItem
+			<AssistantMessageContent
 				message={{
 					id: "m1",
 					role: "assistant",
@@ -134,19 +134,19 @@ describe("MessageItem", () => {
 			],
 			complete: true,
 		};
-		const { rerender } = render(<MessageItem message={message} tools={{}} />);
+		const { rerender } = render(<AssistantMessageContent message={message} tools={{}} />);
 		expect(screen.queryByText("Thinking")).toBeNull();
 		expect(screen.queryByText("private reasoning")).toBeNull();
 		expect(screen.getByText("final answer")).toBeTruthy();
 
-		rerender(<MessageItem message={message} tools={{}} showThinking />);
+		rerender(<AssistantMessageContent message={message} tools={{}} showThinking />);
 		fireEvent.click(screen.getByText("Thinking"));
 		expect(screen.getByText("private reasoning")).toBeTruthy();
 	});
 
 	test("renders assistant Markdown and GFM without raw HTML", () => {
 		const { container } = render(
-			<MessageItem
+			<AssistantMessageContent
 				message={{
 					id: "m-markdown",
 					role: "assistant",
@@ -195,7 +195,7 @@ describe("MessageItem", () => {
 
 	test("renders inline and display LaTeX across supported delimiters", () => {
 		const { container } = render(
-			<MessageItem
+			<AssistantMessageContent
 				message={{
 					id: "m-math",
 					role: "assistant",
@@ -233,7 +233,7 @@ $$\frac{1}{2}$$
 			],
 			complete: false,
 		};
-		const { container, rerender } = render(<MessageItem message={message} tools={{}} />);
+		const { container, rerender } = render(<AssistantMessageContent message={message} tools={{}} />);
 
 		expect(container.querySelector(".katex")).toBeNull();
 		expect(container.textContent).toContain("Costs $5 and $10 or $8k–$12k");
@@ -241,7 +241,7 @@ $$\frac{1}{2}$$
 		expect(container.textContent).toContain("Streaming \\(x^2");
 
 		rerender(
-			<MessageItem
+			<AssistantMessageContent
 				message={{
 					...message,
 					blocks: [{ type: "text", text: String.raw`Streaming \(x^2\)` }],
@@ -252,7 +252,9 @@ $$\frac{1}{2}$$
 		);
 		expect(container.querySelectorAll(".katex")).toHaveLength(1);
 	});
+});
 
+describe("MessageItem", () => {
 	test("renders image blocks in user history", () => {
 		render(
 			<MessageItem
@@ -318,7 +320,6 @@ $$\frac{1}{2}$$
 				tools={{}}
 				canEdit
 				editing={{ text: "edit me" }}
-				onEditDraft={vi.fn()}
 				onEditSend={vi.fn()}
 				onEditCancel={vi.fn()}
 			/>,
@@ -330,7 +331,7 @@ $$\frac{1}{2}$$
 		expect((screen.getByTestId("edit-send-button") as HTMLButtonElement).disabled).toBe(false);
 	});
 
-	test("editor drafts, sends on Enter and cancels on Escape", () => {
+	test("editor keeps the draft local, sends the final text on Enter and cancels on Escape", () => {
 		const message: UiMessage = {
 			id: "u-edit",
 			role: "user",
@@ -338,7 +339,6 @@ $$\frac{1}{2}$$
 			complete: true,
 			entryId: "e1",
 		};
-		const onEditDraft = vi.fn();
 		const onEditSend = vi.fn();
 		const onEditCancel = vi.fn();
 		render(
@@ -347,17 +347,16 @@ $$\frac{1}{2}$$
 				tools={{}}
 				canEdit
 				editing={{ text: "edit me" }}
-				onEditDraft={onEditDraft}
 				onEditSend={onEditSend}
 				onEditCancel={onEditCancel}
 			/>,
 		);
 		const input = screen.getByTestId("user-message-editor-input");
 		fireEvent.change(input, { target: { value: "edited text" } });
-		expect(onEditDraft).toHaveBeenCalledWith("edited text");
+		expect((input as HTMLTextAreaElement).value).toBe("edited text");
 
 		fireEvent.keyDown(input, { key: "Enter" });
-		expect(onEditSend).toHaveBeenCalledTimes(1);
+		expect(onEditSend).toHaveBeenCalledWith("edited text");
 		// Shift+Enter inserts a newline instead of sending.
 		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 		expect(onEditSend).toHaveBeenCalledTimes(1);
@@ -383,7 +382,6 @@ $$\frac{1}{2}$$
 				tools={{}}
 				canEdit
 				editing={{ text: "look at this" }}
-				onEditDraft={vi.fn()}
 				onEditSend={vi.fn()}
 				onEditCancel={vi.fn()}
 			/>,
@@ -656,7 +654,8 @@ describe("SettingsPanel", () => {
 				onClose={vi.fn()}
 			/>,
 		);
-		fireEvent.change(screen.getByTestId("session-storage-mode"), { target: { value: "workspace" } });
+		fireEvent.click(screen.getByTestId("session-storage-mode"));
+		fireEvent.click(screen.getByTestId("session-storage-mode-option-workspace"));
 		fireEvent.click(screen.getByTestId("apply-session-storage"));
 		await waitFor(() => expect(onSessionStorageChange).toHaveBeenCalledWith({ mode: "workspace" }));
 	});
@@ -1098,7 +1097,6 @@ describe("ChatView conversation turns", () => {
 			canEdit: true,
 			onEditMessage: vi.fn(),
 		};
-		const onEditDraft = vi.fn();
 		const onEditSend = vi.fn();
 		const onEditCancel = vi.fn();
 
@@ -1106,7 +1104,6 @@ describe("ChatView conversation turns", () => {
 			<ChatView
 				{...baseProps}
 				editing={{ entryId: "e2", text: "second" }}
-				onEditDraft={onEditDraft}
 				onEditSend={onEditSend}
 				onEditCancel={onEditCancel}
 			/>,
@@ -1117,15 +1114,69 @@ describe("ChatView conversation turns", () => {
 		// The composer is disabled while the editor owns the turn boundary.
 		expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(true);
 
+		// Typing stays editor-local; the commit receives the final text.
 		fireEvent.change(input, { target: { value: "second (edited)" } });
-		expect(onEditDraft).toHaveBeenCalledWith("second (edited)");
+		expect(input.value).toBe("second (edited)");
+		expect(onEditSend).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByTestId("edit-send-button"));
-		expect(onEditSend).toHaveBeenCalledTimes(1);
+		expect(onEditSend).toHaveBeenCalledWith("second (edited)");
 
 		// Closing the editor re-enables the composer.
 		rerender(<ChatView {...baseProps} editing={null} onEditSend={onEditSend} />);
 		expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(false);
 		expect(screen.queryByTestId("user-message-editor-input")).toBeNull();
+	});
+
+	test("typing in the editor does not re-render other mounted turns", () => {
+		const firstUser: UiMessage = {
+			id: "u-1",
+			role: "user",
+			blocks: [{ type: "text", text: "first" }],
+			complete: true,
+			entryId: "e1",
+		};
+		const secondUser: UiMessage = {
+			id: "u-2",
+			role: "user",
+			blocks: [{ type: "text", text: "second" }],
+			complete: true,
+			entryId: "e2",
+		};
+		const assistant: UiMessage = {
+			id: "a-1",
+			role: "assistant",
+			blocks: [{ type: "text", text: "answer" }],
+			complete: true,
+		};
+		render(
+			<ChatView
+				workspaceId="D:\\pi"
+				messages={[firstUser, assistant, secondUser]}
+				tools={{}}
+				showThinking={false}
+				showToolDetails={false}
+				streaming={false}
+				disabled={false}
+				sessionKey="session-1"
+				canEdit
+				editing={{ entryId: "e2", text: "second" }}
+				onEditSend={vi.fn()}
+				onEditCancel={vi.fn()}
+			/>,
+		);
+		const turns = screen.getAllByTestId("conversation-turn");
+		expect(turns).toHaveLength(2);
+		const firstTurnNode = turns[0];
+
+		const input = screen.getByTestId("user-message-editor-input") as HTMLTextAreaElement;
+		fireEvent.change(input, { target: { value: "s" } });
+		fireEvent.change(input, { target: { value: "se" } });
+		fireEvent.change(input, { target: { value: "second (edited)" } });
+
+		// The target editor tracks the draft...
+		expect((screen.getByTestId("user-message-editor-input") as HTMLTextAreaElement).value).toBe("second (edited)");
+		// ...while the untouched turn never re-rendered (same DOM node).
+		expect(screen.getAllByTestId("conversation-turn")[0]).toBe(firstTurnNode);
 	});
 
 	test("anchors the working status to the top of the assistant area while streaming", () => {
@@ -2261,23 +2312,56 @@ describe("CustomProvidersSection", () => {
 		expect(onAdd).toHaveBeenCalledTimes(1);
 	});
 
-	test("edit and delete buttons fire with the provider id", () => {
+	test("edit and delete buttons fire with the provider id through the in-app confirm", async () => {
 		const onEdit = vi.fn();
-		const onDelete = vi.fn();
-		vi.stubGlobal("confirm", () => true);
+		const onDelete = vi.fn(async () => {});
+		const confirmSpy = vi.spyOn(window, "confirm");
 		render(<CustomProvidersSection providers={providers} busy={false} onAdd={vi.fn()} onEdit={onEdit} onDelete={onDelete} onReload={vi.fn()} />);
 		fireEvent.click(screen.getByTestId("custom-provider-edit-my-local"));
 		expect(onEdit).toHaveBeenCalledWith("my-local");
 		fireEvent.click(screen.getByTestId("custom-provider-delete-proxy"));
-		expect(onDelete).toHaveBeenCalledWith("proxy");
+		// The confirmation is an in-app dialog; the native confirm never runs.
+		expect(screen.getByTestId("delete-custom-provider-dialog")).toBeTruthy();
+		expect(confirmSpy).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("delete-custom-provider-dialog-confirm"));
+		await waitFor(() => expect(onDelete).toHaveBeenCalledWith("proxy"));
+		await waitFor(() => expect(screen.queryByTestId("delete-custom-provider-dialog")).toBeNull());
+		confirmSpy.mockRestore();
 	});
 
-	test("delete is suppressed when confirm is dismissed", () => {
-		const onDelete = vi.fn();
-		vi.stubGlobal("confirm", () => false);
+	test("delete is suppressed when the confirm dialog is cancelled or escaped", () => {
+		const onDelete = vi.fn(async () => {});
+		const { unmount } = render(<CustomProvidersSection providers={providers} busy={false} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={onDelete} onReload={vi.fn()} />);
+		fireEvent.click(screen.getByTestId("custom-provider-delete-my-local"));
+		fireEvent.click(screen.getByText("Cancel"));
+		expect(onDelete).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("delete-custom-provider-dialog")).toBeNull();
+
+		// Escape closes the dialog without deleting.
+		fireEvent.click(screen.getByTestId("custom-provider-delete-my-local"));
+		fireEvent.keyDown(screen.getByTestId("delete-custom-provider-dialog"), { key: "Escape" });
+		expect(onDelete).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("delete-custom-provider-dialog")).toBeNull();
+
+		// The close button too.
+		fireEvent.click(screen.getByTestId("custom-provider-delete-my-local"));
+		fireEvent.click(screen.getByTestId("delete-custom-provider-dialog-close"));
+		expect(onDelete).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("delete-custom-provider-dialog")).toBeNull();
+		unmount();
+	});
+
+	test("a failed delete keeps the dialog open and shows the error", async () => {
+		const onDelete = vi.fn(async () => {
+			throw new Error("file locked");
+		});
 		render(<CustomProvidersSection providers={providers} busy={false} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={onDelete} onReload={vi.fn()} />);
 		fireEvent.click(screen.getByTestId("custom-provider-delete-my-local"));
-		expect(onDelete).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("delete-custom-provider-dialog-confirm"));
+		await waitFor(() => expect(onDelete).toHaveBeenCalledWith("my-local"));
+		// The dialog stays open and carries the failure message.
+		expect(screen.getByTestId("delete-custom-provider-dialog")).toBeTruthy();
+		expect(screen.getByTestId("delete-custom-provider-dialog-error").textContent).toContain("file locked");
 	});
 });
 
@@ -2376,7 +2460,7 @@ describe("SettingsPanel custom providers", () => {
 		expect(onSaveCustomProvider.mock.calls[0][0]).toMatchObject({ id: "new", baseUrl: "http://y", api: "openai-completions" });
 	});
 
-	test("saving with an api key stores it through the credential API after saving the provider", async () => {
+	test("saving with an api key passes it to the single save operation", async () => {
 		const onSaveCustomProvider = vi.fn(async () => {});
 		const onSaveApiKey = vi.fn(async () => {});
 		render(
@@ -2407,8 +2491,11 @@ describe("SettingsPanel custom providers", () => {
 		fireEvent.change(screen.getByTestId("custom-provider-api-key"), { target: { value: "sk-test" } });
 		fireEvent.change(screen.getByTestId("custom-provider-model-id-0"), { target: { value: "m1" } });
 		fireEvent.click(screen.getByTestId("custom-provider-save"));
-		await waitFor(() => expect(onSaveApiKey).toHaveBeenCalledWith("new", "sk-test"));
-		expect(onSaveCustomProvider).toHaveBeenCalledTimes(1);
+		await waitFor(() => expect(onSaveCustomProvider).toHaveBeenCalledTimes(1));
+		// One operation carries config + key so the models/auth refresh runs once.
+		expect(onSaveCustomProvider.mock.calls[0][0]).toMatchObject({ id: "new", baseUrl: "http://y" });
+		expect(onSaveCustomProvider.mock.calls[0][1]).toBe("sk-test");
+		expect(onSaveApiKey).not.toHaveBeenCalled();
 	});
 });
 
@@ -2428,6 +2515,8 @@ describe("CustomProviderDialog model fetch", () => {
 			baseUrl: "http://localhost:11434/v1",
 			api: "openai-completions",
 			apiKey: "sk-test",
+			authHeader: false,
+			headers: {},
 		});
 		expect((screen.getByTestId("fetched-model-check-model-a") as HTMLInputElement).checked).toBe(true);
 		expect(screen.getByText("Model B")).toBeTruthy();
@@ -2459,6 +2548,51 @@ describe("CustomProviderDialog model fetch", () => {
 	test("fetch button is hidden when the host does not provide onFetchModels", () => {
 		render(<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onClose={vi.fn()} />);
 		expect(screen.queryByTestId("custom-provider-fetch")).toBeNull();
+	});
+
+	test("the fetch request carries the complete connection draft", async () => {
+		const onFetchModels = vi.fn(async () => [{ id: "m1" }]);
+		render(
+			<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onFetchModels={onFetchModels} onClose={vi.fn()} />,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://x" } });
+		fireEvent.click(screen.getByTestId("custom-provider-auth-header"));
+		fireEvent.click(screen.getByTestId("custom-provider-add-header"));
+		fireEvent.change(screen.getByTestId("custom-provider-header-key-0"), { target: { value: "x-secret" } });
+		fireEvent.change(screen.getByTestId("custom-provider-header-value-0"), { target: { value: "$TOKEN" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(onFetchModels).toHaveBeenCalledTimes(1));
+		expect(onFetchModels).toHaveBeenCalledWith({
+			baseUrl: "http://x",
+			api: "openai-completions",
+			apiKey: undefined,
+			authHeader: true,
+			headers: { "x-secret": "$TOKEN" },
+		});
+	});
+
+	test("a late fetch result is discarded when the connection draft changed", async () => {
+		let resolveFetch: ((models: { id: string }[]) => void) | undefined;
+		const onFetchModels = vi.fn(
+			() =>
+				new Promise<{ id: string }[]>((resolve) => {
+					resolveFetch = resolve;
+				}),
+		);
+		render(
+			<CustomProviderDialog busy={false} error={null} onSave={vi.fn(async () => {})} onFetchModels={onFetchModels} onClose={vi.fn()} />,
+		);
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://first" } });
+		fireEvent.click(screen.getByTestId("custom-provider-fetch"));
+		await waitFor(() => expect(onFetchModels).toHaveBeenCalledTimes(1));
+		// The draft changes while the request is still in flight.
+		fireEvent.change(screen.getByTestId("custom-provider-base-url"), { target: { value: "http://second" } });
+		await act(async () => {
+			resolveFetch?.([{ id: "late-model" }]);
+		});
+		// The stale result never reaches the UI.
+		expect(screen.queryByTestId("custom-provider-fetched")).toBeNull();
+		expect(screen.queryByText("late-model")).toBeNull();
 	});
 
 	test("fetch matches local catalog metadata and pre-fills added models", async () => {

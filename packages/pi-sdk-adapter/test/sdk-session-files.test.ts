@@ -12,14 +12,14 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime, type SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
 import { loadSdk } from "../src/sdk-loader.ts";
 import { normalizeSdkMessages } from "../src/sdk-normalizer.ts";
 import {
 	createSessionFile,
 	extractEditableUserMessages,
-	readEditableUserMessages,
-	readSessionHistory,
+	type ReadSessionProjectionOptions,
+	readSessionProjection,
 	resolveFreshSessionDefaults,
 } from "../src/sdk-session-files.ts";
 
@@ -60,7 +60,7 @@ describe("session file helpers", () => {
 		expect(reopened.getSessionId()).toBe(sessionId);
 	});
 
-	test("readSessionHistory matches runtime getMessages for the same file", async () => {
+	test("projection messages match runtime getMessages and carry structural entry ids", async () => {
 		const sdk = await loadSdk();
 		const credentials = new InMemoryCredentialStore();
 		const faux = fauxProvider({ provider: "history-faux" });
@@ -91,9 +91,23 @@ describe("session file helpers", () => {
 		expect(file).toBeDefined();
 		session.dispose();
 
-		const history = await readSessionHistory(file as string);
-		expect(history.length).toBe(runtimeMessages.length);
-		expect(textOf(history)).toBe(textOf(runtimeMessages));
+		const projection = await readSessionProjection(file as string, {
+			sessionId: "history-session",
+			modelRuntime: Promise.resolve(runtime),
+			resolveContextWindow: () => undefined,
+		});
+		expect(projection.messages.length).toBe(runtimeMessages.length);
+		expect(textOf(projection.messages)).toBe(textOf(runtimeMessages));
+		// Entry ids pair structurally: exactly the user messages carry one.
+		expect(projection.entryIds).toHaveLength(projection.messages.length);
+		projection.messages.forEach((message, index) => {
+			if (message.role === "user") {
+				expect(projection.entryIds[index]).toBeTypeOf("string");
+			} else {
+				expect(projection.entryIds[index]).toBeUndefined();
+			}
+		});
+		expect(projection.editable.map((entry) => entry.text)).toEqual(["What is the answer?"]);
 	});
 });
 
@@ -317,10 +331,53 @@ describe("extractEditableUserMessages", () => {
 	});
 });
 
-describe("readEditableUserMessages", () => {
+describe("readSessionProjection", () => {
+	let fixtureRuntime: ModelRuntime | undefined;
+
+	async function projectionRuntime(): Promise<ModelRuntime> {
+		if (fixtureRuntime) return fixtureRuntime;
+		const credentials = new InMemoryCredentialStore();
+		const faux = fauxProvider({ provider: "projection-faux" });
+		const runtime = await ModelRuntime.create({
+			credentials,
+			modelsPath: null,
+			allowModelNetwork: false,
+			refreshOnCreate: false,
+		});
+		new ModelRegistry(runtime).registerProvider(faux.provider);
+		await runtime.refresh({ allowNetwork: false });
+		fixtureRuntime = runtime;
+		return runtime;
+	}
+
+	async function project(file: string, sessionId = "fixture") {
+		const options: ReadSessionProjectionOptions = {
+			sessionId,
+			modelRuntime: projectionRuntime(),
+			resolveContextWindow: () => undefined,
+		};
+		return readSessionProjection(file, options);
+	}
+
+	test("reads and parses the JSONL exactly once", async () => {
+		const file = writeSessionFixture("single-parse", [
+			userEntry("u1", null, "first", 100),
+			assistantEntry("a1", "u1", "answer one", 200),
+		]);
+		const sdk = await loadSdk();
+		const parseSpy = vi.spyOn(sdk, "parseSessionEntries");
+		try {
+			await project(file, "single-parse");
+			expect(parseSpy).toHaveBeenCalledTimes(1);
+		} finally {
+			parseSpy.mockRestore();
+		}
+	});
+
 	test("reports only the current leaf path, never abandoned branches", async () => {
 		// Two branches: u1 → a1 → u2 → a2 and u1 → a1 → u3. The last entry
-		// (u3) is the leaf, so only its path is editable.
+		// (u3) is the leaf, so only its path is active; the old continuation
+		// (u2/a2) stays in the file but leaves the projection.
 		const file = writeSessionFixture("branchy", [
 			userEntry("u1", null, "first", 100),
 			assistantEntry("a1", "u1", "answer one", 200),
@@ -328,13 +385,68 @@ describe("readEditableUserMessages", () => {
 			assistantEntry("a2", "u2", "answer two", 400),
 			userEntry("u3", "a1", "alternative", 500),
 		]);
-		const editable = await readEditableUserMessages(file);
-		expect(editable.map((entry: EditableUserMessage) => entry.entryId)).toEqual(["u1", "u3"]);
-		expect(editable[1].text).toBe("alternative");
+		const projection = await project(file);
+		expect(projection.editable.map((entry: EditableUserMessage) => entry.entryId)).toEqual(["u1", "u3"]);
+		expect(projection.editable[1].text).toBe("alternative");
+		expect(textOf(projection.messages)).toBe("first | answer one | alternative");
+		// The entry ids pair with the projected messages by position.
+		const userIds = projection.messages.map((message, index) =>
+			message.role === "user" ? projection.entryIds[index] : undefined,
+		);
+		expect(userIds.filter((id) => id !== undefined)).toEqual(["u1", "u3"]);
 	});
 
-	test("returns an empty list for a header-only file", async () => {
+	test("compaction keeps the kept tail on the active branch and drops the summarized head", async () => {
+		// u1 → a1 → u2 → compaction(firstKept=u2) → a2. The compacted-away
+		// head disappears from the context messages but its user message stays
+		// editable on the leaf path.
+		const compaction: SessionEntry = {
+			type: "compaction",
+			id: "c1",
+			parentId: "u2",
+			timestamp: new Date(350).toISOString(),
+			summary: "earlier context",
+			firstKeptEntryId: "u2",
+			tokensBefore: 100,
+		};
+		const file = writeSessionFixture("compacted", [
+			userEntry("u1", null, "first", 100),
+			assistantEntry("a1", "u1", "answer one", 200),
+			userEntry("u2", "a1", "second", 300),
+			compaction,
+			assistantEntry("a2", "c1", "answer two", 400),
+		]);
+		const projection = await project(file);
+		const text = textOf(projection.messages);
+		expect(text).toContain("second");
+		expect(text).toContain("answer two");
+		expect(text).not.toContain("first");
+		expect(text).not.toContain("answer one");
+		expect(projection.editable.map((entry) => entry.entryId)).toEqual(["u1", "u2"]);
+	});
+
+	test("user messages with identical timestamps still pair with their own entry ids", async () => {
+		const file = writeSessionFixture("same-timestamp", [
+			userEntry("u1", null, "twin one", 100),
+			userEntry("u2", "u1", "twin two", 100),
+		]);
+		const projection = await project(file);
+		const paired = projection.messages
+			.map((message, index) =>
+				message.role === "user" ? { text: textOf([message]), entryId: projection.entryIds[index] } : undefined,
+			)
+			.filter((entry): entry is { text: string; entryId: string | undefined } => entry !== undefined);
+		expect(paired).toEqual([
+			{ text: "twin one", entryId: "u1" },
+			{ text: "twin two", entryId: "u2" },
+		]);
+	});
+
+	test("projects an empty result for a header-only file", async () => {
 		const file = writeSessionFixture("empty", []);
-		expect(await readEditableUserMessages(file)).toEqual([]);
+		const projection = await project(file);
+		expect(projection.messages).toEqual([]);
+		expect(projection.entryIds).toEqual([]);
+		expect(projection.editable).toEqual([]);
 	});
 });

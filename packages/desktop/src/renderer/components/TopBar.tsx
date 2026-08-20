@@ -252,7 +252,7 @@ export function TopBar({
 					title="Open settings"
 					aria-label="Open settings"
 				>
-					<Icon name="settings" size={30} />
+					<Icon name="settings" size={27} />
 				</button>
 			</div>
 		</header>

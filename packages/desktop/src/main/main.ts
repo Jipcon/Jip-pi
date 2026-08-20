@@ -18,11 +18,7 @@ import type {
 	SessionInfo,
 	UserMessage,
 } from "@earendil-works/pi-agent-protocol";
-import {
-	readPersistedSessionState,
-	resolveFreshSessionDefaults,
-	SdkHostServices,
-} from "@earendil-works/pi-sdk-adapter";
+import { readSessionProjection, resolveFreshSessionDefaults, SdkHostServices } from "@earendil-works/pi-sdk-adapter";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { CustomProviderConfig, CustomProviderFetchRequest, CustomProviderMatchRequest } from "../shared/ipc.ts";
 import { DEFAULT_SESSION_STORAGE, IPC, type SessionStorageConfig } from "../shared/ipc.ts";
@@ -136,8 +132,12 @@ const runtime: DesktopAgentRuntime = sdkMode
 	? new SdkBackendManager({
 			agentDir: agentDirPath(),
 			hostServices,
-			readSessionHistory: (file) => agentHost.readSessionHistory(file),
-			readSessionUsage: (file, options) => agentHost.readSessionUsage(file, options),
+			readSessionProjection: (file, options) =>
+				readSessionProjection(file, {
+					sessionId: options.sessionId,
+					modelRuntime: hostServices.sharedRuntime,
+					resolveContextWindow: options.resolveContextWindow,
+				}),
 			findSession: (sessionId) => agentHost.findSession(sessionId),
 			listCatalogSessions: () => agentHost.listSessions(),
 			createSessionFile: (workspace, sessionDir) => agentHost.createSessionFile(workspace, sessionDir),
@@ -150,9 +150,6 @@ const runtime: DesktopAgentRuntime = sdkMode
 					modelRuntime: hostServices.sharedRuntime,
 					pendingModel,
 				}),
-			readPersistedSessionState: (file) =>
-				readPersistedSessionState(file, { modelRuntime: hostServices.sharedRuntime }),
-			readEditableUserMessages: (file) => agentHost.readEditableUserMessages(file),
 		})
 	: new LegacyBackendManager({
 			findSession: (sessionId) => agentHost.findSession(sessionId),
@@ -191,12 +188,12 @@ function createWindow(): void {
 		minHeight: 720,
 		title: "Jip-pi",
 		icon: join(app.getAppPath(), "assets", "icon.png"),
-		backgroundColor: "#080808",
+		backgroundColor: "#121416",
 		titleBarStyle: "hidden",
 		...(process.platform !== "darwin"
 			? {
 					titleBarOverlay: {
-						color: "#101010",
+						color: "#191c1f",
 						symbolColor: "#c7c7c7",
 						height: 60,
 					},
@@ -440,7 +437,7 @@ function registerIpc(): void {
 
 	ipcMain.handle(IPC.customProvidersSave, (_event, config: CustomProviderConfig) =>
 		toCommandResult(async () => {
-			saveCustomProvider(modelsJsonPath(), config);
+			await saveCustomProvider(modelsJsonPath(), config);
 			// Reload the backend catalog so the new provider is usable without
 			// an app restart, then the renderer re-fetches models/auth status.
 			await runtime.reloadModels();

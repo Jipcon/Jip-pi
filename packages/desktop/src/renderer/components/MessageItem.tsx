@@ -1,8 +1,8 @@
 /**
- * MessageItem: renders a single chat message.
- * - user: right-aligned rounded card, max-width 80%
- * - assistant: left-aligned, full width, no giant bubble; thinking and full
- *   tool details are opt-in display preferences.
+ * MessageItem: renders a single user chat message as a right-aligned rounded
+ * card (max-width 80%), with the inline editor when an edit targets it.
+ * Assistant content is rendered by ConversationTurn through
+ * AssistantMessageContent.
  */
 
 import { memo, useEffect, useRef, useState } from "react";
@@ -21,12 +21,10 @@ interface MessageContentProps {
 	canEdit?: boolean;
 	/** Request to edit this user message (open the inline editor). */
 	onEdit?: (message: UiMessage) => void;
-	/** Inline editor state for this message (draft text included). */
+	/** Inline editor state for this message: edit target and initial text. */
 	editing?: { text: string } | null;
-	/** Update the inline editor's draft. */
-	onEditDraft?: (text: string) => void;
-	/** Commit the edit: branch before this message and resend the text. */
-	onEditSend?: () => void;
+	/** Commit the edit with the final text: branch before this message and resend. */
+	onEditSend?: (text: string) => void;
 	/** Abandon the edit and restore the original message. */
 	onEditCancel?: () => void;
 }
@@ -43,7 +41,6 @@ function messageContentPropsEqual(prev: MessageContentProps, next: MessageConten
 	if (prev.canEdit !== next.canEdit) return false;
 	if (prev.onEdit !== next.onEdit) return false;
 	if (prev.editing !== next.editing) return false;
-	if (prev.onEditDraft !== next.onEditDraft) return false;
 	if (prev.onEditSend !== next.onEditSend) return false;
 	if (prev.onEditCancel !== next.onEditCancel) return false;
 	for (const block of prev.message.blocks) {
@@ -161,18 +158,19 @@ export const AssistantMessageContent = memo(AssistantMessageContentImpl, message
 function UserMessageEditor({
 	text,
 	hasImages,
-	onDraft,
 	onSend,
 	onCancel,
 }: {
 	text: string;
 	hasImages: boolean;
-	onDraft: (text: string) => void;
-	onSend: () => void;
+	onSend: (text: string) => void;
 	onCancel: () => void;
 }): React.JSX.Element {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
-	const canSend = text.trim().length > 0;
+	// The draft is editor-local: typing re-renders only this editor, never the
+	// surrounding turns. The final text is handed to onSend on commit.
+	const [draft, setDraft] = useState(text);
+	const canSend = draft.trim().length > 0;
 
 	useEffect(() => {
 		const textarea = textareaRef.current;
@@ -191,7 +189,7 @@ function UserMessageEditor({
 			textarea.style.height = "auto";
 			textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 54), 180)}px`;
 		}
-	}, [text]);
+	}, [draft]);
 
 	return (
 		<div className="user-bubble user-bubble-editing" data-testid="user-message-editor">
@@ -201,14 +199,14 @@ function UserMessageEditor({
 			<textarea
 				ref={textareaRef}
 				className="user-message-editor-input"
-				value={text}
+				value={draft}
 				rows={1}
-				onChange={(event) => onDraft(event.target.value)}
+				onChange={(event) => setDraft(event.target.value)}
 				onKeyDown={(event) => {
 					if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
 						event.preventDefault();
 						if (canSend) {
-							onSend();
+							onSend(draft);
 						}
 					}
 					if (event.key === "Escape") {
@@ -230,7 +228,7 @@ function UserMessageEditor({
 					type="button"
 					className="btn btn-primary"
 					disabled={!canSend}
-					onClick={onSend}
+					onClick={() => onSend(draft)}
 					data-testid="edit-send-button"
 				>
 					Send
@@ -242,77 +240,95 @@ function UserMessageEditor({
 
 function MessageItemImpl({
 	message,
-	tools,
-	showThinking = false,
-	showToolDetails = false,
 	canEdit = false,
 	onEdit,
 	editing = null,
-	onEditDraft,
 	onEditSend,
 	onEditCancel,
 }: MessageContentProps): React.JSX.Element {
-	if (message.role === "user") {
-		const text = message.blocks
-			.filter((block) => block.type === "text")
-			.map((block) => (block.type === "text" ? block.text : ""))
-			.join("");
-		const images = message.blocks.filter((block) => block.type === "image");
-		const editable = canEdit && message.entryId !== undefined && onEdit !== undefined;
-		if (editing) {
-			return (
-				<div className="message-row message-row-user">
-					<UserMessageEditor
-						text={editing.text}
-						hasImages={images.length > 0}
-						onDraft={(draft) => onEditDraft?.(draft)}
-						onSend={() => onEditSend?.()}
-						onCancel={() => onEditCancel?.()}
-					/>
-				</div>
-			);
+	const text = message.blocks
+		.filter((block) => block.type === "text")
+		.map((block) => (block.type === "text" ? block.text : ""))
+		.join("");
+	const images = message.blocks.filter((block) => block.type === "image");
+	const editable = canEdit && message.entryId !== undefined && onEdit !== undefined;
+	const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
+	const copyStatusResetTimer = useRef<number | undefined>(undefined);
+
+	useEffect(
+		() => () => {
+			if (copyStatusResetTimer.current !== undefined) {
+				window.clearTimeout(copyStatusResetTimer.current);
+			}
+		},
+		[],
+	);
+
+	async function copyUserMessage(): Promise<void> {
+		if (text.trim().length === 0) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			setCopyStatus("copied");
+		} catch {
+			setCopyStatus("error");
 		}
+		if (copyStatusResetTimer.current !== undefined) {
+			window.clearTimeout(copyStatusResetTimer.current);
+		}
+		copyStatusResetTimer.current = window.setTimeout(() => setCopyStatus("idle"), 1500);
+	}
+	if (editing) {
 		return (
 			<div className="message-row message-row-user">
-				<div className={`user-bubble ${text ? "" : "user-bubble-images-only"}`} data-testid="user-message">
-					{images.length > 0 && (
-						<div className="user-message-images">
-							{images.map((image, index) => (
-								<MessageImage key={index} block={image} className="user-message-image" />
-							))}
-						</div>
-					)}
-					{text && <div className="user-message-text">{text}</div>}
-				</div>
-				{editable && (
-					<button
-						type="button"
-						className="icon-button user-message-edit"
-						onClick={() => onEdit?.(message)}
-						aria-label="Edit message"
-						title="Edit message"
-						data-testid="edit-user-message"
-					>
-						<Icon name="edit" size={16} />
-					</button>
-				)}
+				<UserMessageEditor
+					text={editing.text}
+					hasImages={images.length > 0}
+					onSend={(text) => onEditSend?.(text)}
+					onCancel={() => onEditCancel?.()}
+				/>
 			</div>
 		);
 	}
-
 	return (
-		<div className="message-row message-row-assistant" data-testid="assistant-message">
-			<div className="assistant-meta">
-				<span>Jip-pi</span>
+		<div className="message-row message-row-user">
+			<div className={`user-bubble ${text ? "" : "user-bubble-images-only"}`} data-testid="user-message">
+				{images.length > 0 && (
+					<div className="user-message-images">
+						{images.map((image, index) => (
+							<MessageImage key={index} block={image} className="user-message-image" />
+						))}
+					</div>
+				)}
+				{text && <div className="user-message-text">{text}</div>}
 			</div>
-			<div className="assistant-body">
-				<AssistantMessageContent
-					message={message}
-					tools={tools}
-					showThinking={showThinking}
-					showToolDetails={showToolDetails}
-				/>
-			</div>
+			{(editable || text.trim().length > 0) && (
+				<div className="user-message-actions">
+					{text.trim().length > 0 && (
+						<button
+							type="button"
+							className={`icon-button user-message-copy user-message-copy-${copyStatus}`}
+							onClick={() => void copyUserMessage()}
+							aria-label={copyStatus === "copied" ? "Copied" : "Copy message"}
+							title={copyStatus === "copied" ? "Copied" : "Copy message"}
+							data-testid="copy-user-message"
+						>
+							<Icon name={copyStatus === "copied" ? "check" : "copy"} size={16} />
+						</button>
+					)}
+					{editable && (
+						<button
+							type="button"
+							className="icon-button user-message-edit"
+							onClick={() => onEdit?.(message)}
+							aria-label="Edit message"
+							title="Edit message"
+							data-testid="edit-user-message"
+						>
+							<Icon name="edit" size={16} />
+						</button>
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

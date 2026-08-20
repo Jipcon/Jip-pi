@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "./messages.ts";
-import type { AgentState } from "./sessions.ts";
+import type { AgentState, EditableUserMessage } from "./sessions.ts";
 import type { ToolCallInfo } from "./tools.ts";
 
 export interface AgentStartedEvent {
@@ -127,6 +127,15 @@ export interface InteractionRequestedEvent {
 	request: UserInteractionRequest;
 }
 
+/**
+ * Newly editable user messages since the last report (delta only — the full
+ * history text is never re-sent). Entries are chronological.
+ */
+export interface EditableMessagesAddedEvent {
+	type: "editable_messages_added";
+	entries: EditableUserMessage[];
+}
+
 export type AgentEvent =
 	| AgentStartedEvent
 	| AgentStoppedEvent
@@ -143,4 +152,5 @@ export type AgentEvent =
 	| AutoRetryStartedEvent
 	| AutoRetryEndedEvent
 	| InteractionRequestedEvent
+	| EditableMessagesAddedEvent
 	| CustomEvent;

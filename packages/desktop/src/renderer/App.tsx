@@ -48,7 +48,6 @@ import {
 	startEditMessage,
 	startWorkspace,
 	store,
-	updateEditDraft,
 	useAgentBridge,
 	useAppState,
 } from "./state/hooks.ts";
@@ -248,37 +247,37 @@ export function App(): React.JSX.Element {
 		[activeSessionId],
 	);
 
-	const onEditDraft = useCallback(
-		(text: string) => {
-			if (activeSessionId !== null) {
-				updateEditDraft(activeSessionId, text);
-			}
-		},
-		[activeSessionId],
-	);
-
 	const onEditCancel = useCallback(() => {
 		if (activeSessionId !== null) {
 			cancelEditMessage(activeSessionId);
 		}
 	}, [activeSessionId]);
 
-	const onEditSend = useCallback(() => {
-		const editing = activeSession?.editing;
-		const workspaceId = activeSession?.workspaceId ?? workspace ?? "";
-		if (!editing || activeSessionId === null || !workspaceId) {
-			return;
-		}
-		void resendEditedMessage(workspaceId, activeSessionId, editing.entryId, editing.text).catch((error) => {
-			store.dispatch({
-				type: "notify",
-				notification: {
-					message: `Failed to edit message: ${error instanceof Error ? error.message : String(error)}`,
-					type: "error",
-				},
+	// The commit receives the final text from the editor; the edit target is
+	// read from the store at call time so this callback stays stable while
+	// the user types.
+	const onEditSend = useCallback(
+		(text: string) => {
+			if (activeSessionId === null) {
+				return;
+			}
+			const session = store.getSnapshot().sessionStateById[activeSessionId];
+			const workspaceId = session?.workspaceId ?? workspace ?? "";
+			if (!session?.editing || !workspaceId) {
+				return;
+			}
+			void resendEditedMessage(workspaceId, activeSessionId, session.editing.entryId, text).catch((error) => {
+				store.dispatch({
+					type: "notify",
+					notification: {
+						message: `Failed to edit message: ${error instanceof Error ? error.message : String(error)}`,
+						type: "error",
+					},
+				});
 			});
-		});
-	}, [activeSession?.editing, activeSession?.workspaceId, activeSessionId, workspace]);
+		},
+		[activeSessionId, workspace],
+	);
 
 	const noWorkspace =
 		state.status.phase === "no-workspace" ||
@@ -349,7 +348,6 @@ export function App(): React.JSX.Element {
 					canEdit={canEditMessages}
 					onEditMessage={onEditMessage}
 					editing={activeSession?.editing ?? null}
-					onEditDraft={onEditDraft}
 					onEditSend={onEditSend}
 					onEditCancel={onEditCancel}
 				/>

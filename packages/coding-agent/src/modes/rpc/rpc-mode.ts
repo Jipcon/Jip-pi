@@ -546,8 +546,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 			case "match_models_metadata": {
 				const wanted = new Set(command.ids);
-				const models = session.modelRuntime.getModels().filter((model) => wanted.has(model.id));
-				return success(id, "match_models_metadata", { models });
+				const catalog = session.modelRuntime.getModels();
+				const exact = catalog.filter((model) => wanted.has(model.id));
+				// Case-insensitive fallback for requested ids without an exact
+				// entry; exact hits always win during downstream merging.
+				const satisfiedLower = new Set(exact.map((model) => model.id.toLocaleLowerCase()));
+				const fallback = catalog.filter((model) => {
+					if (wanted.has(model.id)) return false;
+					const lower = model.id.toLocaleLowerCase();
+					return !satisfiedLower.has(lower) && command.ids.some((id) => id.toLocaleLowerCase() === lower);
+				});
+				return success(id, "match_models_metadata", { models: [...exact, ...fallback] });
 			}
 
 			// =================================================================

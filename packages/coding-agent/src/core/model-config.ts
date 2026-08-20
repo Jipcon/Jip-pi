@@ -226,6 +226,29 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 	return path || "root";
 }
 
+/**
+ * Validate a candidate models.json document against the authoritative
+ * schema without touching the filesystem. Returns a human-readable error
+ * description, or undefined when the document is valid.
+ */
+export function validateModelsJsonContent(content: string): string | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripJsonComments(content));
+	} catch (error) {
+		return `Failed to parse models.json: ${error instanceof Error ? error.message : error}`;
+	}
+	if (!validateModelsConfig.Check(parsed)) {
+		const errors =
+			validateModelsConfig
+				.Errors(parsed)
+				.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
+				.join("\n") || "Unknown schema error";
+		return `Invalid models.json schema:\n${errors}`;
+	}
+	return undefined;
+}
+
 function deepFreeze<T>(value: T): T {
 	if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
 	for (const child of Object.values(value)) deepFreeze(child);

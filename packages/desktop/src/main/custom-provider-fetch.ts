@@ -3,26 +3,33 @@
  * provider's model listing endpoint (OpenAI-compatible GET /v1/models and
  * Google's GET /models). Runs in the main process because the renderer is
  * subject to CORS; the surface is deliberately narrow: http/https only,
- * fixed GET paths derived from the api type, one 15s timeout, and every
+ * fixed GET paths derived from the api type, ONE shared deadline across all
+ * endpoint candidates, named response-size and model-count limits, and every
  * error path is redacted before it can reach the renderer or logs.
  *
- * The endpoint-candidate and header strategy follows cc-switch's
- * model_fetch service (https://github.com/farion1231/cc-switch):
- * - candidates are tried in order, falling through on 404/405 only;
- * - base URLs ending in an OpenAI-style version segment (/v{N}) already
- *   contain the version path, so {base}/models is tried before
- *   {base}/v1/models;
- * - base URLs ending in a known Anthropic-protocol compat suffix get
- *   extra candidates with the suffix stripped (DeepSeek /anthropic,
- *   Zhipu /api/anthropic, etc.);
- * - the auth header is derived from the api type (x-api-key for
- *   anthropic-messages, x-goog-api-key for google-generative-ai, Bearer
- *   otherwise).
+ * The fetch receives the complete connection draft (api, key, authHeader,
+ * custom headers) and derives request headers with the same rules a real
+ * provider request uses: custom headers first, `authHeader` forces
+ * `Authorization: Bearer <key>`, and the per-api default credential header
+ * only fills in when neither is present.
+ *
+ * The endpoint-candidate strategy follows cc-switch's model_fetch service
+ * (https://github.com/farion1231/cc-switch): candidates are tried in order,
+ * falling through on 404/405 only; base URLs ending in an OpenAI-style
+ * version segment (/v{N}) already contain the version path, so {base}/models
+ * is tried before {base}/v1/models; base URLs ending in a known
+ * Anthropic-protocol compat suffix get extra candidates with the suffix
+ * stripped (DeepSeek /anthropic, Zhipu /api/anthropic, etc.).
  */
 
 import type { CustomProviderApi, CustomProviderFetchedModel, CustomProviderFetchRequest } from "../shared/ipc.ts";
 
-const FETCH_TIMEOUT_MS = 15_000;
+/** Total deadline shared by every endpoint candidate (never per candidate). */
+export const FETCH_TIMEOUT_MS = 15_000;
+/** Response bodies above this size are rejected before parsing. */
+export const MAX_RESPONSE_BYTES = 5_000_000;
+/** Model lists above this length are rejected. */
+export const MAX_FETCHED_MODELS = 1_000;
 /** 404/405 bodies are truncated so HTML error pages never bloat error text. */
 const ERROR_BODY_MAX_CHARS = 512;
 
@@ -123,11 +130,38 @@ export function buildModelsUrlCandidates(baseUrl: string, api: CustomProviderApi
 	return dedupe(candidates);
 }
 
-/** Auth header for the model-list request, derived from the api type. */
-export function buildFetchHeaders(api: CustomProviderApi, apiKey: string): Headers {
+/** Header names that already carry credentials (case-insensitive). */
+const CREDENTIAL_HEADER_NAMES = ["authorization", "x-api-key", "x-goog-api-key"];
+
+/**
+ * Request headers for the model-list request, mirroring the rules real
+ * provider requests use: the draft's custom headers are applied as-is,
+ * `authHeader` forces `Authorization: Bearer <key>` on top, and the per-api
+ * default credential header only fills in when no credential header exists.
+ */
+export function buildFetchHeaders(
+	api: CustomProviderApi,
+	apiKey: string,
+	authHeader = false,
+	customHeaders?: Record<string, string>,
+): Headers {
 	const headers = new Headers();
+	for (const [key, value] of Object.entries(customHeaders ?? {})) {
+		if (key.trim().length > 0) {
+			headers.set(key, value);
+		}
+	}
+	if (authHeader && apiKey.length > 0) {
+		headers.set("Authorization", `Bearer ${apiKey}`);
+		return headers;
+	}
 	if (apiKey.length === 0) {
 		return headers;
+	}
+	for (const name of CREDENTIAL_HEADER_NAMES) {
+		if (headers.has(name)) {
+			return headers;
+		}
 	}
 	if (api === "anthropic-messages") {
 		headers.set("x-api-key", apiKey);
@@ -139,11 +173,13 @@ export function buildFetchHeaders(api: CustomProviderApi, apiKey: string): Heade
 	return headers;
 }
 
-/** Redact the credential from error text and truncate oversized bodies. */
-function redactAndTruncate(body: string, apiKey: string): string {
+/** Redact every known secret from error text and truncate oversized bodies. */
+function redactAndTruncate(body: string, secrets: readonly string[]): string {
 	let out = body;
-	if (apiKey.length > 0) {
-		out = out.split(apiKey).join("[REDACTED]");
+	for (const secret of secrets) {
+		if (secret.length > 0) {
+			out = out.split(secret).join("[REDACTED]");
+		}
 	}
 	if (out.length > ERROR_BODY_MAX_CHARS) {
 		out = `${out.slice(0, ERROR_BODY_MAX_CHARS)}…`;
@@ -151,7 +187,7 @@ function redactAndTruncate(body: string, apiKey: string): string {
 	return out;
 }
 
-/** Parse the endpoint response for the given api type. */
+/** Parse the endpoint response for the given api type (ids deduplicated). */
 function parseModelsResponse(api: CustomProviderApi, text: string): CustomProviderFetchedModel[] {
 	let parsed: unknown;
 	try {
@@ -164,6 +200,12 @@ function parseModelsResponse(api: CustomProviderApi, text: string): CustomProvid
 	}
 	const body = parsed as Record<string, unknown>;
 	const models: CustomProviderFetchedModel[] = [];
+	const seenIds = new Set<string>();
+	const pushUnique = (model: CustomProviderFetchedModel): void => {
+		if (seenIds.has(model.id)) return;
+		seenIds.add(model.id);
+		models.push(model);
+	};
 
 	if (api === "google-generative-ai") {
 		const list = body.models;
@@ -178,7 +220,7 @@ function parseModelsResponse(api: CustomProviderApi, text: string): CustomProvid
 			if (typeof item.displayName === "string") model.name = item.displayName;
 			if (typeof item.inputTokenLimit === "number") model.contextWindow = item.inputTokenLimit;
 			if (typeof item.outputTokenLimit === "number") model.maxTokens = item.outputTokenLimit;
-			models.push(model);
+			pushUnique(model);
 		}
 	} else {
 		const list = body.data;
@@ -191,10 +233,13 @@ function parseModelsResponse(api: CustomProviderApi, text: string): CustomProvid
 			if (typeof item.id !== "string" || item.id.trim().length === 0) continue;
 			const model: CustomProviderFetchedModel = { id: item.id };
 			if (typeof item.display_name === "string") model.name = item.display_name;
-			models.push(model);
+			pushUnique(model);
 		}
 	}
 
+	if (models.length > MAX_FETCHED_MODELS) {
+		throw new Error(`Endpoint returned ${models.length} models; at most ${MAX_FETCHED_MODELS} are supported`);
+	}
 	models.sort((a, b) => a.id.localeCompare(b.id));
 	return models;
 }
@@ -203,26 +248,48 @@ function parseModelsResponse(api: CustomProviderApi, text: string): CustomProvid
 export async function fetchProviderModels(request: CustomProviderFetchRequest): Promise<CustomProviderFetchedModel[]> {
 	const apiKey = request.apiKey?.trim() ?? "";
 	const candidates = buildModelsUrlCandidates(request.baseUrl, request.api);
-	const headers = buildFetchHeaders(request.api, apiKey);
+	const headers = buildFetchHeaders(request.api, apiKey, request.authHeader === true, request.headers);
+	// Everything that travelled in the request as a credential must never
+	// surface in error text (keys and secret-bearing custom header values).
+	const secrets = [apiKey, ...Object.values(request.headers ?? {})].map((value) => value.trim());
+	// One total deadline for the whole candidate walk: a slow candidate
+	// consumes budget instead of every candidate restarting the clock.
+	const deadline = Date.now() + FETCH_TIMEOUT_MS;
 	let lastError: string | null = null;
 
 	for (const url of candidates) {
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) {
+			break;
+		}
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), remaining);
 		let response: Response;
 		try {
 			response = await fetch(url, {
 				method: "GET",
 				headers,
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+				signal: controller.signal,
 			});
 		} catch (error) {
+			if (controller.signal.aborted) {
+				throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS}ms`);
+			}
 			throw new Error(`Request failed: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			clearTimeout(timer);
+		}
+
+		const text = await response.text();
+		if (text.length > MAX_RESPONSE_BYTES) {
+			throw new Error(`Response exceeds ${MAX_RESPONSE_BYTES} bytes`);
 		}
 
 		if (response.ok) {
-			return parseModelsResponse(request.api, await response.text());
+			return parseModelsResponse(request.api, text);
 		}
 
-		const body = redactAndTruncate(await response.text(), apiKey);
+		const body = redactAndTruncate(text, secrets);
 		if (response.status === 404 || response.status === 405) {
 			lastError = `HTTP ${response.status}: ${body}`;
 			continue;
@@ -230,5 +297,5 @@ export async function fetchProviderModels(request: CustomProviderFetchRequest): 
 		throw new Error(`HTTP ${response.status}: ${body}`);
 	}
 
-	throw new Error(`All candidates failed: ${lastError ?? "no candidates"}`);
+	throw new Error(`All candidates failed: ${lastError ?? "deadline exceeded"}`);
 }

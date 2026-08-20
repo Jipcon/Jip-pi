@@ -2,6 +2,7 @@
  * Session and runtime state model.
  */
 
+import type { AgentMessage } from "./messages.ts";
 import type { ModelInfo } from "./models.ts";
 
 /** A historical user message that can be edited by forking a new session before it. */
@@ -16,6 +17,26 @@ export interface EditableUserMessage {
 
 /** Result of editing a past user message and resending it in place. */
 export type EditAndResendResult = { status: "sent" } | { status: "cancelled" };
+
+/**
+ * One-pass projection of a persisted session: messages, state, usage and
+ * stable entry ids come out of a single read/parse of the session file.
+ */
+export interface SessionProjection {
+	/** Active-branch messages in context order. */
+	messages: AgentMessage[];
+	/**
+	 * Stable session entry id per message, parallel to `messages`. Only user
+	 * messages on the active branch carry one; every other slot is undefined.
+	 */
+	entryIds: Array<string | undefined>;
+	/** File-recorded model, only when resolvable with configured auth. */
+	model: ModelInfo | null;
+	/** File-recorded thinking level, only when the branch changed it explicitly. */
+	thinkingLevel?: string;
+	usage: SessionUsage;
+	editable: EditableUserMessage[];
+}
 
 export interface SessionInfo {
 	id: string;

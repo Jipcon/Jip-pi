@@ -3171,6 +3171,90 @@ export class AgentSession {
 	}
 
 	/**
+	 * Edit a past user message and resend it in place, atomically.
+	 *
+	 * The session tree branches before the edited message (an in-file branch:
+	 * the old continuation stays in the file but leaves the active context),
+	 * and the edited text is queued as a new prompt. All four phases — locate,
+	 * switch, prompt, rollback — happen inside this seam:
+	 *
+	 * - Commit point: the prompt is accepted (the new user entry is about to
+	 *   be appended). Any error thrown before that restores the original leaf
+	 *   exactly, via a direct leaf-pointer reset — never through
+	 *   `navigateTree`, whose user-target semantics would re-parent a
+	 *   user-message leaf instead of restoring it.
+	 * - An extension veto (`session_before_tree`) or an aborted summarization
+	 *   cancels before anything is mutated and returns `{ status: "cancelled" }`.
+	 */
+	async editAndResend(entryId: string, text: string): Promise<{ status: "sent" } | { status: "cancelled" }> {
+		if (this.isStreaming) {
+			throw new Error("Wait for the current response to finish before editing a message");
+		}
+		const targetEntry = this.sessionManager.getEntry(entryId);
+		if (!targetEntry) {
+			throw new Error(`Entry ${entryId} not found`);
+		}
+		if (targetEntry.type !== "message" || targetEntry.message.role !== "user") {
+			throw new Error(`Entry ${entryId} is not a user message`);
+		}
+
+		const oldLeafId = this.sessionManager.getLeafId();
+		// Forward switch through the sanctioned seam: runs the
+		// session_before_tree veto and positions the leaf right before the
+		// edited user message. A veto/abort cancels before anything is mutated.
+		const navigation = await this.navigateTree(entryId);
+		if (navigation.cancelled) {
+			return { status: "cancelled" };
+		}
+
+		try {
+			// Queue the edited text. The promise resolves only once the prompt
+			// is accepted; rejection happens before the new user entry exists.
+			await new Promise<void>((resolve, reject) => {
+				let accepted = false;
+				void this.prompt(text, {
+					source: "rpc",
+					preflightResult: (success) => {
+						if (success) {
+							accepted = true;
+							resolve();
+						}
+					},
+				}).catch((error: unknown) => {
+					if (!accepted) {
+						reject(error instanceof Error ? error : new Error(String(error)));
+					}
+				});
+			});
+		} catch (error) {
+			// Pre-commit failure: restore the original leaf exactly.
+			await this.restoreLeaf(oldLeafId);
+			throw error;
+		}
+		return { status: "sent" };
+	}
+
+	/**
+	 * Reset the leaf pointer directly to a previous position (no user-target
+	 * redirect semantics), resync the agent context, and notify extensions of
+	 * the tree change.
+	 */
+	private async restoreLeaf(leafId: string | null): Promise<void> {
+		const supersededLeafId = this.sessionManager.getLeafId();
+		if (leafId === null) {
+			this.sessionManager.resetLeaf();
+		} else {
+			this.sessionManager.branch(leafId);
+		}
+		this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+		await this._extensionRunner.emit({
+			type: "session_tree",
+			newLeafId: this.sessionManager.getLeafId(),
+			oldLeafId: supersededLeafId,
+		});
+	}
+
+	/**
 	 * Get all user messages from session for fork selector.
 	 */
 	getUserMessagesForForking(): Array<{ entryId: string; text: string }> {

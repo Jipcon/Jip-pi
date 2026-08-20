@@ -235,23 +235,25 @@ export function Composer({
 					<div className="composer-actions">
 						<button
 							type="button"
-							className="btn btn-danger composer-action"
+							className="composer-action composer-stop"
 							disabled={!streaming || disabled}
 							onClick={() => void stop()}
 							data-testid="stop-button"
+							aria-label="Stop generation"
+							title="Stop"
 						>
-							<Icon name="stop" size={15} />
-							Stop
+							<Icon name="stop" size={20} />
 						</button>
 						<button
 							type="button"
-							className="btn btn-primary composer-action"
+							className="composer-action composer-send"
 							disabled={!canSend}
 							onClick={() => void submit()}
 							data-testid="send-button"
+							aria-label="Send message"
+							title="Send (Enter)"
 						>
-							{sending ? "Sending…" : "Send"}
-							<Icon name="send" size={15} />
+							<Icon name="arrow-up" size={20} />
 						</button>
 					</div>
 				</div>

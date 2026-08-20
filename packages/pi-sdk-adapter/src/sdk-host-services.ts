@@ -136,9 +136,18 @@ export class SdkHostServices implements AgentHostServices {
 		const wanted = new Set(ids);
 		// getModels() is the full catalog (built-in + custom), unfiltered by
 		// credential state — exactly what metadata pre-fill needs.
-		return runtime
-			.getModels()
-			.filter((model) => wanted.has(model.id))
+		const catalog = runtime.getModels();
+		const exact = catalog.filter((model) => wanted.has(model.id));
+		// Case-insensitive fallback for requested ids without an exact entry
+		// (e.g. requesting qwen-plus against a catalog Qwen-Plus). Exact hits
+		// are always included and win during downstream merging.
+		const satisfiedLower = new Set(exact.map((model) => model.id.toLocaleLowerCase()));
+		const fallback = catalog.filter((model) => {
+			if (wanted.has(model.id)) return false;
+			const lower = model.id.toLocaleLowerCase();
+			return !satisfiedLower.has(lower) && [...wanted].some((id) => id.toLocaleLowerCase() === lower);
+		});
+		return [...exact, ...fallback]
 			.map((model) => normalizeSdkModel(model))
 			.filter((model): model is ModelInfo => model !== null);
 	}

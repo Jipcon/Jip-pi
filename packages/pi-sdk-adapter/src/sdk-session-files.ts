@@ -1,32 +1,104 @@
 /**
  * Session file helpers: pure JSONL operations delegated to the coding-agent
- * SDK's own parsing implementation (parseSessionEntries / buildSessionContext)
- * so the Desktop never re-implements session format semantics.
+ * SDK's own parsing implementation (parseSessionEntries / buildSessionContext
+ * / buildSessionPath) so the Desktop never re-implements session format,
+ * branch, compaction or leaf-selection semantics.
+ *
+ * The single entry point for persisted sessions is `readSessionProjection`:
+ * it reads and parses the JSONL exactly once and derives messages, stable
+ * entry ids, persisted model/thinking state, usage and editable entries
+ * from that one parse.
  */
 
 import { readFile } from "node:fs/promises";
-import type { AgentMessage, EditableUserMessage, ModelInfo } from "@earendil-works/pi-agent-protocol";
+import type {
+	AgentMessage,
+	EditableUserMessage,
+	ModelInfo,
+	SessionProjection,
+} from "@earendil-works/pi-agent-protocol";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import type { ModelRuntime, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { loadSdk } from "./sdk-loader.ts";
-import { normalizeSdkMessages, normalizeSdkModel } from "./sdk-normalizer.ts";
+import { normalizeSdkMessage, normalizeSdkModel } from "./sdk-normalizer.ts";
+import { computeSessionUsageFromEntries } from "./sdk-session-usage.ts";
 
 export interface SessionFileIdentity {
 	sessionId: string;
 	sessionFile: string;
 }
 
+export interface ReadSessionProjectionOptions {
+	/** Session id the projection belongs to (usage is keyed by it). */
+	sessionId: string;
+	/** Shared runtime promise; used to resolve the file-recorded model. */
+	modelRuntime: Promise<ModelRuntime>;
+	/**
+	 * Resolve the context window for the session's model from the model
+	 * catalog. Return 0 or undefined to omit contextUsage.
+	 */
+	resolveContextWindow(model: { provider: string; modelId: string } | null): number | undefined;
+}
+
 /**
- * Read the full message history of a persisted JSONL session using Pi's own
- * parsing (compaction-aware branch resolution). The result matches what a
- * runtime getMessages() reports for the same session.
+ * One-pass projection of a persisted JSONL session. The file is read and
+ * parsed exactly once; messages, entry ids, persisted model/thinking state,
+ * usage and editable entries all derive from that single parse. Branch,
+ * compaction and leaf selection come from the SDK's authoritative helpers
+ * (buildSessionContext / buildContextEntries / buildSessionPath).
  */
-export async function readSessionHistory(filePath: string): Promise<AgentMessage[]> {
+export async function readSessionProjection(
+	filePath: string,
+	options: ReadSessionProjectionOptions,
+): Promise<SessionProjection> {
 	const sdk = await loadSdk();
 	const content = await readFile(filePath, "utf8");
-	const entries = sdk.parseSessionEntries(content).filter((entry) => entry.type !== "session");
+	const entries = sdk.parseSessionEntries(content).filter((entry): entry is SessionEntry => entry.type !== "session");
+
+	// Messages and their stable entry ids, normalized per context entry so
+	// the association is structural, never inferred from timestamps.
+	const contextEntries = sdk.buildContextEntries(entries);
+	const messages: AgentMessage[] = [];
+	const entryIds: Array<string | undefined> = [];
+	for (const entry of contextEntries) {
+		const entryMessages = entry.type === "message" ? [entry.message] : sdk.sessionEntryToContextMessages(entry);
+		for (const message of entryMessages) {
+			const normalized = normalizeSdkMessage(message);
+			if (normalized === null) continue;
+			messages.push(normalized);
+			entryIds.push(entry.type === "message" && entry.message.role === "user" ? entry.id : undefined);
+		}
+	}
+
+	// Persisted model/thinking state, mirroring createAgentSession's restore
+	// path: the recorded model only applies when the runtime knows it and its
+	// provider has configured auth; the recorded thinking level only applies
+	// when the branch contains an explicit thinking_level_change entry.
 	const context = sdk.buildSessionContext(entries);
-	return normalizeSdkMessages(context.messages);
+	let model: ModelInfo | null = null;
+	if (context.model !== null) {
+		const modelRuntime = await options.modelRuntime;
+		const restored = modelRuntime.getModel(context.model.provider, context.model.modelId);
+		if (restored && modelRuntime.hasConfiguredAuth(restored.provider)) {
+			model = normalizeSdkModel(restored);
+		}
+	}
+	const thinkingLevel = entries.some((entry) => entry.type === "thinking_level_change")
+		? context.thinkingLevel
+		: undefined;
+
+	const usage = computeSessionUsageFromEntries(sdk, entries, {
+		sessionId: options.sessionId,
+		resolveContextWindow: options.resolveContextWindow,
+	});
+
+	// Editable entries come from the full leaf path (same source as the live
+	// SessionManager.getBranch()), via the SDK's own leaf/branch walk.
+	const editable = extractEditableUserMessages(sdk.buildSessionPath(entries));
+
+	const projection: SessionProjection = { messages, entryIds, model, usage, editable };
+	if (thinkingLevel !== undefined) projection.thinkingLevel = thinkingLevel;
+	return projection;
 }
 
 /**
@@ -95,46 +167,6 @@ export async function resolveFreshSessionDefaults(options: FreshSessionDefaultsO
 	};
 }
 
-export interface PersistedSessionState {
-	/** File-recorded model, when it exists in the runtime and has configured auth. */
-	model: ModelInfo | null;
-	/** File-recorded thinking level, only when the branch changed it explicitly. */
-	thinkingLevel?: string;
-}
-
-/**
- * Read the model/thinking state a persisted (history-bearing) session will
- * materialize with, mirroring createAgentSession's restore path: the recorded
- * model only applies when the runtime knows it and its provider has
- * configured auth; the recorded thinking level only applies when the branch
- * contains an explicit thinking_level_change entry. Used so a reopened
- * historical session can display its real model before materialization.
- */
-export async function readPersistedSessionState(
-	filePath: string,
-	options: { modelRuntime: Promise<ModelRuntime> },
-): Promise<PersistedSessionState> {
-	const sdk = await loadSdk();
-	const content = await readFile(filePath, "utf8");
-	const entries = sdk.parseSessionEntries(content).filter((entry) => entry.type !== "session");
-	const context = sdk.buildSessionContext(entries);
-
-	let model: ModelInfo | null = null;
-	if (context.model !== null) {
-		const modelRuntime = await options.modelRuntime;
-		const restored = modelRuntime.getModel(context.model.provider, context.model.modelId);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.provider)) {
-			model = normalizeSdkModel(restored);
-		}
-	}
-
-	const state: PersistedSessionState = { model };
-	if (entries.some((entry) => entry.type === "thinking_level_change")) {
-		state.thinkingLevel = context.thinkingLevel;
-	}
-	return state;
-}
-
 // ---------------------------------------------------------------------------
 // Editable user messages
 // ---------------------------------------------------------------------------
@@ -167,8 +199,7 @@ export function extractUserMessageText(content: unknown): string {
  * Build the editable user messages from a branch's entries (the leaf path).
  * Filters to `message` entries whose role is `user` and whose text is
  * non-empty, mapping each to `{ entryId, text, timestamp }`. The timestamp
- * comes from the embedded message (the same value `getMessages()` reports),
- * so the renderer can align entries to rendered messages exactly.
+ * comes from the embedded message (the same value `getMessages()` reports).
  */
 export function extractEditableUserMessages(branch: readonly SessionEntry[]): EditableUserMessage[] {
 	const result: EditableUserMessage[] = [];
@@ -183,33 +214,4 @@ export function extractEditableUserMessages(branch: readonly SessionEntry[]): Ed
 		result.push(editable);
 	}
 	return result;
-}
-
-/**
- * Read the editable user messages of a persisted JSONL session without a
- * live backend. Mirrors `SessionManager.getBranch()`: the leaf is the last
- * appended entry (the current branch tip), and the path is walked via
- * `parentId` to the root. Only the current leaf path is editable, so entries
- * on abandoned in-file branches never appear.
- */
-export async function readEditableUserMessages(filePath: string): Promise<EditableUserMessage[]> {
-	const sdk = await loadSdk();
-	const content = await readFile(filePath, "utf8");
-	const fileEntries = sdk.parseSessionEntries(content).filter((entry) => entry.type !== "session");
-	if (fileEntries.length === 0) {
-		return [];
-	}
-	const byId = new Map<string, SessionEntry>();
-	for (const entry of fileEntries) {
-		byId.set(entry.id, entry as SessionEntry);
-	}
-	// _buildIndex sets leafId to the last file entry; replicate that here.
-	const branch: SessionEntry[] = [];
-	let current: SessionEntry | undefined = fileEntries[fileEntries.length - 1] as SessionEntry;
-	while (current) {
-		branch.push(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
-	}
-	branch.reverse();
-	return extractEditableUserMessages(branch);
 }

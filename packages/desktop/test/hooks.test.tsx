@@ -11,6 +11,7 @@ import {
 	removeProviderCredential,
 	renameSessionEntry,
 	resendEditedMessage,
+	saveCustomProvider,
 	saveProviderApiKey,
 	startWorkspace,
 	store,
@@ -361,23 +362,22 @@ describe("session operations", () => {
 });
 
 describe("message editing (in place)", () => {
-	test("openSession fetches editable user messages alongside the snapshot", async () => {
+	test("openSession applies structurally paired entry ids from the snapshot", async () => {
 		vi.mocked(window.agent.openSession).mockResolvedValue({
 			state: snapshotState("target-session"),
 			messages: [{ role: "user", content: "hello", timestamp: 10 }],
 			usage: null,
+			entryIds: ["e1"],
 		});
-		vi.mocked(window.agent.listEditableUserMessages).mockResolvedValue([
-			{ entryId: "e1", text: "hello", timestamp: 10 },
-		]);
 		store.dispatch({ type: "status", status: { phase: "running", workspace: "D:\\work" } });
 
 		await openSession("D:\\work", "target-session");
-		expect(window.agent.listEditableUserMessages).toHaveBeenCalledWith("D:\\work", "target-session");
+		// No separate editable scan: the pairing rides on the snapshot itself.
+		expect(window.agent.listEditableUserMessages).not.toHaveBeenCalled();
 		expect(store.getSnapshot().sessionStateById["target-session"].messages[0].entryId).toBe("e1");
 	});
 
-	test("agent_stopped realigns editable user messages", async () => {
+	test("agent_stopped never re-scans; the editable delta carries only new entries", async () => {
 		let eventHandler: Parameters<typeof window.agent.subscribe>[0] | undefined;
 		vi.mocked(window.agent.subscribe).mockImplementation((handler) => {
 			eventHandler = handler;
@@ -386,9 +386,6 @@ describe("message editing (in place)", () => {
 		vi.mocked(window.agent.onStatus).mockReturnValue(() => {});
 		vi.mocked(window.agent.onHostEvent).mockReturnValue(() => {});
 		vi.mocked(window.agent.getStatus).mockResolvedValue({ phase: "running", workspace: "D:\\work" });
-		vi.mocked(window.agent.listEditableUserMessages).mockResolvedValue([
-			{ entryId: "e-late", text: "late message", timestamp: 42 },
-		]);
 		store.dispatch({
 			type: "session-snapshot",
 			workspaceId: "D:\\work",
@@ -407,13 +404,21 @@ describe("message editing (in place)", () => {
 				event: { type: "agent_stopped" },
 			}),
 		);
+		// Stopping triggers no full editable re-scan.
+		expect(window.agent.listEditableUserMessages).not.toHaveBeenCalled();
 
-		await waitFor(() =>
-			expect(window.agent.listEditableUserMessages).toHaveBeenCalledWith("D:\\work", "stopped-session"),
+		// The backend pushes only the newly editable entry.
+		act(() =>
+			eventHandler?.({
+				workspaceId: "D:\\work",
+				sessionId: "stopped-session",
+				event: {
+					type: "editable_messages_added",
+					entries: [{ entryId: "e-late", text: "late message", timestamp: 42 }],
+				},
+			}),
 		);
-		await waitFor(() =>
-			expect(store.getSnapshot().sessionStateById["stopped-session"].messages[0].entryId).toBe("e-late"),
-		);
+		expect(store.getSnapshot().sessionStateById["stopped-session"].messages[0].entryId).toBe("e-late");
 	});
 
 	test("resendEditedMessage truncates optimistically and sends the edit in place", async () => {
@@ -429,10 +434,7 @@ describe("message editing (in place)", () => {
 			],
 			usage: null,
 			thinkingLevels: [],
-			editableUserMessages: [
-				{ entryId: "e1", text: "first", timestamp: 100 },
-				{ entryId: "e2", text: "second", timestamp: 200 },
-			],
+			entryIds: ["e1", undefined, "e2"],
 		});
 		store.dispatch({ type: "active-session", sessionId: "source-session" });
 		store.dispatch({
@@ -476,10 +478,7 @@ describe("message editing (in place)", () => {
 			],
 			usage: null,
 			thinkingLevels: [],
-			editableUserMessages: [
-				{ entryId: "e1", text: "first", timestamp: 100 },
-			{ entryId: "e2", text: "second", timestamp: 200 },
-			],
+			entryIds: ["e1", undefined, "e2"],
 		});
 		store.dispatch({
 			type: "session-edit-start",
@@ -512,7 +511,7 @@ describe("message editing (in place)", () => {
 			messages: [{ role: "user", content: "first", timestamp: 100 }],
 			usage: null,
 			thinkingLevels: [],
-			editableUserMessages: [{ entryId: "e1", text: "first", timestamp: 100 }],
+			entryIds: ["e1"],
 		});
 		store.dispatch({
 			type: "session-edit-start",
@@ -582,5 +581,44 @@ describe("auth operations", () => {
 		await loginProviderOAuth("opencode");
 		expect(window.agent.loginWithOAuth).toHaveBeenCalledWith("opencode");
 		expect(window.agent.listModels).toHaveBeenCalled();
+	});
+});
+
+describe("custom provider save", () => {
+	const config = {
+		id: "my-local",
+		baseUrl: "http://x",
+		api: "openai-completions" as const,
+		models: [{ id: "m1" }],
+	};
+
+	test("saving config and api key refreshes models/auth exactly once", async () => {
+		vi.mocked(window.agent.saveCustomProvider).mockResolvedValue();
+		vi.mocked(window.agent.setApiKey).mockResolvedValue();
+		vi.mocked(window.agent.listModels).mockResolvedValue([{ id: "m1", name: "M", provider: "my-local" }]);
+		vi.mocked(window.agent.listProviderAuthStatus).mockResolvedValue([
+			{ provider: "my-local", configured: true, source: "stored", mutable: true },
+		]);
+
+		await saveCustomProvider(config, "sk-test");
+
+		expect(window.agent.saveCustomProvider).toHaveBeenCalledTimes(1);
+		expect(window.agent.setApiKey).toHaveBeenCalledWith("my-local", "sk-test");
+		// One refresh for the combined save, not one per step.
+		expect(window.agent.listModels).toHaveBeenCalledTimes(1);
+		expect(window.agent.listProviderAuthStatus).toHaveBeenCalledTimes(1);
+		expect(store.getSnapshot().models).toHaveLength(1);
+		expect(store.getSnapshot().authStatuses).toHaveLength(1);
+	});
+
+	test("saving without an api key skips the credential write", async () => {
+		vi.mocked(window.agent.saveCustomProvider).mockResolvedValue();
+		vi.mocked(window.agent.listModels).mockResolvedValue([]);
+		vi.mocked(window.agent.listProviderAuthStatus).mockResolvedValue([]);
+
+		await saveCustomProvider(config);
+
+		expect(window.agent.saveCustomProvider).toHaveBeenCalledTimes(1);
+		expect(window.agent.setApiKey).not.toHaveBeenCalled();
 	});
 });

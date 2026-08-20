@@ -17,7 +17,6 @@ import type { SessionUsage, ToolCallInfo } from "@earendil-works/pi-agent-protoc
 import type { RetryState, UiMessage } from "../state/store.ts";
 import { Composer } from "./Composer.tsx";
 import { ConversationTurn, groupMessagesIntoTurns, type ConversationTurnModel } from "./ConversationTurn.tsx";
-import { Icon } from "./Icon.tsx";
 import { UsageBar } from "./UsageBar.tsx";
 
 const MemoComposer = memo(Composer);
@@ -49,9 +48,9 @@ function conversationTurnEqual(
 	if (prev.canEdit !== next.canEdit) return false;
 	if (prev.onEdit !== next.onEdit) return false;
 	if (prev.editing !== next.editing) return false;
-	if (prev.onEditDraft !== next.onEditDraft) return false;
 	if (prev.onEditSend !== next.onEditSend) return false;
-	if (prev.onEditCancel !== next.onEditCancel) return false;	for (const message of prev.turn.assistantMessages) {
+	if (prev.onEditCancel !== next.onEditCancel) return false;
+	for (const message of prev.turn.assistantMessages) {
 		for (const block of message.blocks) {
 			if (block.type === "toolCall" && prev.tools[block.id] !== next.tools[block.id]) {
 				return false;
@@ -85,7 +84,6 @@ export function ChatView({
 	canEdit = false,
 	onEditMessage,
 	editing = null,
-	onEditDraft,
 	onEditSend,
 	onEditCancel,
 }: {
@@ -106,12 +104,10 @@ export function ChatView({
 	canEdit?: boolean;
 	/** Request to edit a user message (open the inline editor). */
 	onEditMessage?: (message: UiMessage) => void;
-	/** Inline editor state for the active session, if an edit is in progress. */
+	/** Edit target and initial text for the active session; the draft stays editor-local. */
 	editing?: { entryId: string; text: string } | null;
-	/** Update the inline editor's draft. */
-	onEditDraft?: (text: string) => void;
-	/** Commit the inline edit (branch before the message and resend). */
-	onEditSend?: () => void;
+	/** Commit the inline edit with the final text (branch before the message and resend). */
+	onEditSend?: (text: string) => void;
 	/** Abandon the inline edit. */
 	onEditCancel?: () => void;
 }): React.JSX.Element {
@@ -232,16 +228,8 @@ export function ChatView({
 				<div className="chat-inner">
 					{messages.length === 0 && (
 						<div className="chat-empty">
-							<span className="chat-empty-mark" aria-hidden="true">
-								<Icon name="sparkles" size={24} />
-							</span>
 							<h1>Build with Jip-pi</h1>
 							<p>Explore your codebase, plan a change, or trace a difficult bug.</p>
-							<div className="chat-empty-capabilities" aria-label="Suggested tasks">
-								<span>Explore code</span>
-								<span>Plan changes</span>
-								<span>Debug issues</span>
-							</div>
 						</div>
 					)}
 					<div className="message-list" aria-live="polite">
@@ -256,7 +244,6 @@ export function ChatView({
 								canEdit={canEdit && !streaming}
 								onEdit={onEditMessage}
 								editing={editing}
-								onEditDraft={onEditDraft}
 								onEditSend={onEditSend}
 								onEditCancel={onEditCancel}
 							/>

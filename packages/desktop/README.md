@@ -113,8 +113,13 @@ tree. Development-only overrides are:
 The desktop settings file is stored at
 `<Electron app.getPath("userData")>/desktop-settings.json`. It records session
 storage configuration, recent workspaces and workspaces hidden from the
-catalog. Removing a workspace entry does not delete its directory or session
-files.
+catalog. Removing a workspace through the sidebar is destructive: after an
+in-app confirmation the workspace directory itself and every session file
+that belongs to the workspace (including sessions stored outside the
+directory, e.g. under the default session root) are moved to the system
+Trash, and only then is the workspace dropped from the recent list. See the
+sidebar's "Remove workspace?" dialog and the `CHANGELOG.md` entry that
+introduced this behavior.
 
 ## Session lifecycle and storage
 
@@ -141,7 +146,9 @@ Changing the storage mode while a workspace is running restarts its backend;
 it is rejected while the agent is streaming. The global catalog discovers
 known session roots and deduplicates sessions by ID. The active session cannot
 be deleted, and all other deletions use Electron's `shell.trashItem` rather
-than permanent removal. Deletion is confirmed through an in-app dialog, not
+than permanent removal — this includes workspace removal, which additionally
+moves the workspace directory itself to the Trash (see the Development
+section). Deletion is confirmed through an in-app dialog, not
 `window.confirm`: Electron's synchronous native confirm can leave the window's
 input/focus state wedged after closing (symptom: menus stop opening, the
 composer keeps focus but accepts no typing).

@@ -14,6 +14,7 @@ import type {
 	ModelInfo,
 	ModelRef,
 	SessionBackendConfig,
+	SessionProjection,
 	SessionUsage,
 	UserMessage,
 } from "@earendil-works/pi-agent-protocol";
@@ -32,7 +33,12 @@ class FakeAgentBackend implements ManagedSessionBackend {
 	pendingInteractions = 0;
 	sessionId: string | undefined;
 	startConfig: SessionBackendConfig | undefined;
+	startCount = 0;
 	stopCount = 0;
+	/** When set, start waits on this gate (concurrency tests). */
+	startGate: Promise<void> | undefined;
+	/** When set, start rejects with this error (failure tests). */
+	startError: Error | undefined;
 	/** Custom state returned by getState (falls back to the default shape). */
 	customState: AgentState | null = null;
 	/** Messages returned by getMessages. */
@@ -62,6 +68,13 @@ class FakeAgentBackend implements ManagedSessionBackend {
 	}
 
 	async start(config: SessionBackendConfig): Promise<void> {
+		this.startCount += 1;
+		if (this.startGate) {
+			await this.startGate;
+		}
+		if (this.startError) {
+			throw this.startError;
+		}
 		this.started = true;
 		this.startConfig = config;
 		this.sessionId = config.sessionId ?? this.sessionId ?? "fake-session";
@@ -183,18 +196,33 @@ function readSessionUsageStub(
 	};
 }
 
+/** Default one-pass projection stub: empty history, zero usage. */
+function readSessionProjectionStub(
+	_file: string,
+	options: {
+		sessionId: string;
+		resolveContextWindow(model: { provider: string; modelId: string } | null): number | undefined;
+	},
+): Promise<SessionProjection> {
+	return Promise.resolve({
+		messages: [],
+		entryIds: [],
+		model: null,
+		usage: readSessionUsageStub(_file, options),
+		editable: [],
+	});
+}
+
 function createManagerWithBackend(backend: FakeAgentBackend): SdkBackendManager {
 	return new SdkBackendManager({
 		agentDir: "C:\\agent",
 		hostServices: fakeHostServices(),
-		readSessionHistory: async () => [],
-		readSessionUsage: async (file, options) => readSessionUsageStub(file, options),
+		readSessionProjection: readSessionProjectionStub,
 		findSession: async (sessionId) => ({ id: sessionId, file: `C:\\sessions\\${sessionId}.jsonl` }),
 		listCatalogSessions: async () => [],
 		createSessionFile: async () => ({ sessionId: "created", sessionFile: "C:\\sessions\\created.jsonl" }),
 		renameCatalogSession: async () => {},
 		deleteCatalogFile: async () => {},
-		readEditableUserMessages: async () => [],
 		createSessionBackend: () => backend,
 	});
 }
@@ -205,14 +233,12 @@ function createManager(overrides: Partial<SdkBackendManagerOptions> = {}): TestH
 	const manager = new SdkBackendManager({
 		agentDir: "C:\\agent",
 		hostServices: fakeHostServices(),
-		readSessionHistory: async () => [],
-		readSessionUsage: async (file, options) => readSessionUsageStub(file, options),
+		readSessionProjection: readSessionProjectionStub,
 		findSession: async (sessionId) => ({ id: sessionId, file: `C:\\sessions\\${sessionId}.jsonl` }),
 		listCatalogSessions: async () => [],
 		createSessionFile: async () => ({ sessionId: "created", sessionFile: "C:\\sessions\\created.jsonl" }),
 		renameCatalogSession: async () => {},
 		deleteCatalogFile: async () => {},
-		readEditableUserMessages: async () => [],
 		createSessionBackend: () => {
 			const fake = new FakeAgentBackend();
 			fakes.push(fake);
@@ -252,6 +278,107 @@ describe("SdkBackendManager pool", () => {
 		expect(a1).toBe(a2);
 		expect(a1).not.toBe(b);
 		expect(fakes).toHaveLength(2);
+	});
+
+	test("concurrent getOrCreateBackend calls materialize exactly one backend", async () => {
+		const fakes: FakeAgentBackend[] = [];
+		let releaseGate: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			releaseGate = resolve;
+		});
+		const { manager } = createManager({
+			createSessionBackend: () => {
+				const fake = new FakeAgentBackend();
+				fake.startGate = gate;
+				fakes.push(fake);
+				return fake;
+			},
+		});
+		const pending = Array.from({ length: 20 }, () => manager.getOrCreateBackend(W1, "session-a"));
+		releaseGate();
+		const results = await Promise.all(pending);
+		expect(new Set(results).size).toBe(1);
+		expect(fakes).toHaveLength(1);
+		expect(fakes[0].startCount).toBe(1);
+	});
+
+	test("a caller arriving while findSession is pending joins the in-flight materialization", async () => {
+		const fakes: FakeAgentBackend[] = [];
+		let releaseFind: () => void = () => {};
+		const findGate = new Promise<void>((resolve) => {
+			releaseFind = resolve;
+		});
+		const { manager } = createManager({
+			findSession: async (sessionId) => {
+				await findGate;
+				return { id: sessionId, file: `C:\\sessions\\${sessionId}.jsonl` };
+			},
+			createSessionBackend: () => {
+				const fake = new FakeAgentBackend();
+				fakes.push(fake);
+				return fake;
+			},
+		});
+		const first = manager.getOrCreateBackend(W1, "session-a");
+		const second = manager.getOrCreateBackend(W1, "session-a");
+		releaseFind();
+		expect(await first).toBe(await second);
+		expect(fakes).toHaveLength(1);
+		expect(fakes[0].startCount).toBe(1);
+	});
+
+	test("a failed start rejects every concurrent caller and leaves no record", async () => {
+		const fakes: FakeAgentBackend[] = [];
+		let releaseGate: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			releaseGate = resolve;
+		});
+		const { manager } = createManager({
+			createSessionBackend: () => {
+				const fake = new FakeAgentBackend();
+				if (fakes.length === 0) {
+					fake.startGate = gate;
+					fake.startError = new Error("boom");
+				}
+				fakes.push(fake);
+				return fake;
+			},
+		});
+		const first = manager.getOrCreateBackend(W1, "session-a");
+		const second = manager.getOrCreateBackend(W1, "session-a");
+		releaseGate();
+		await expect(first).rejects.toThrow("boom");
+		await expect(second).rejects.toThrow("boom");
+		expect(fakes).toHaveLength(1);
+		expect(manager.getBackend(W1, "session-a")).toBeUndefined();
+		// A retry after the failure materializes a fresh backend.
+		const retry = await manager.getOrCreateBackend(W1, "session-a");
+		expect(fakes).toHaveLength(2);
+		expect(retry).toBe(fakes[1]);
+	});
+
+	test("a dispose during materialization never lets the orphan re-enter the pool", async () => {
+		const fakes: FakeAgentBackend[] = [];
+		let releaseGate: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			releaseGate = resolve;
+		});
+		const { manager } = createManager({
+			createSessionBackend: () => {
+				const fake = new FakeAgentBackend();
+				fake.startGate = gate;
+				fakes.push(fake);
+				return fake;
+			},
+		});
+		const pending = manager.getOrCreateBackend(W1, "session-a");
+		await manager.disposeBackend(W1, "session-a");
+		releaseGate();
+		await expect(pending).rejects.toThrow("disposed while starting");
+		expect(manager.getBackend(W1, "session-a")).toBeUndefined();
+		// The pool is clean: the next materialization starts fresh.
+		const next = await manager.getOrCreateBackend(W1, "session-a");
+		expect(next).toBe(fakes[1]);
 	});
 
 	test("sessions of different workspaces get separate backends", async () => {
@@ -312,7 +439,11 @@ describe("SdkBackendManager pool", () => {
 	test("openSession does not predict defaults for sessions with history", async () => {
 		const calls: TestHarness["freshDefaultsCalls"] = [];
 		const { manager } = createManager({
-			readSessionHistory: async () => [{ role: "user", content: "hello" }],
+			readSessionProjection: async (file, options) => ({
+				...(await readSessionProjectionStub(file, options)),
+				messages: [{ role: "user", content: "hello", timestamp: 1 }],
+				entryIds: ["e1"],
+			}),
 			resolveFreshSessionDefaults: async (workspacePath, pendingModel) => {
 				calls.push({ workspacePath, pendingModel });
 				return { model: null, thinkingLevel: "medium" };
@@ -326,13 +457,36 @@ describe("SdkBackendManager pool", () => {
 	test("openSession reports the file-recorded model for a historical session", async () => {
 		const persistedModel: ModelInfo = { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "deepseek" };
 		const { manager, fakes } = createManager({
-			readSessionHistory: async () => [{ role: "user", content: "hello" }],
-			readPersistedSessionState: async () => ({ model: persistedModel, thinkingLevel: "max" }),
+			readSessionProjection: async (file, options) => ({
+				...(await readSessionProjectionStub(file, options)),
+				messages: [{ role: "user", content: "hello", timestamp: 1 }],
+				entryIds: ["e1"],
+				model: persistedModel,
+				thinkingLevel: "max",
+			}),
 		});
 		const snapshot = await manager.openSession(W1, "historical");
 		expect(snapshot.state.model).toEqual(persistedModel);
 		expect(snapshot.state.thinkingLevel).toBe("max");
 		expect(fakes).toHaveLength(0);
+	});
+
+	test("cold-opening a historical session runs the projection exactly once", async () => {
+		let projectionCalls = 0;
+		const { manager } = createManager({
+			readSessionProjection: async (file, options) => {
+				projectionCalls += 1;
+				return {
+					...(await readSessionProjectionStub(file, options)),
+					messages: [{ role: "user", content: "hello", timestamp: 1 }],
+					entryIds: ["e1"],
+				};
+			},
+		});
+		const snapshot = await manager.openSession(W1, "history-once");
+		expect(projectionCalls).toBe(1);
+		// The snapshot carries the structurally paired entry ids.
+		expect(snapshot.entryIds).toEqual(["e1"]);
 	});
 
 	test("pushes the authoritative state once a session backend materializes", async () => {
@@ -644,8 +798,10 @@ describe("SdkBackendManager message editing", () => {
 
 	test("listEditableUserMessages falls back to the catalog file without a backend", async () => {
 		const { manager } = createManager({
-			readEditableUserMessages: async (file) =>
-				file.includes("history") ? [{ entryId: "e1", text: "stored prompt", timestamp: 10 }] : [],
+			readSessionProjection: async (file, options) => ({
+				...(await readSessionProjectionStub(file, options)),
+				editable: file.includes("history") ? [{ entryId: "e1", text: "stored prompt", timestamp: 10 }] : [],
+			}),
 		});
 
 		const editable = await manager.listEditableUserMessages(W1, "history-session");

@@ -152,11 +152,8 @@ export function useAgentBridge(): void {
 					agentStateRevision += 1;
 				}
 				store.dispatch({ type: "routed-event", workspaceId, sessionId, event });
-				if (event.type === "agent_stopped") {
-					// The new turn's messages now have entry ids on disk: re-align so
-					// the just-completed user message becomes editable.
-					void refreshEditableUserMessages(workspaceId, sessionId);
-				}
+				// Newly editable entries arrive through the editable_messages_added
+				// event (delta only); no history re-scan happens here.
 				if (
 					event.type === "turn_completed" ||
 					(event.type === "custom" && event.namespace === "pi" && event.name === "compaction_end")
@@ -319,21 +316,6 @@ async function refreshSessionUsage(workspaceId: string, sessionId: string): Prom
 	}
 }
 
-/**
- * Re-fetch the editable user message list for a session and re-align entry ids
- * onto the already-rendered messages. Used after `agent_stopped` so the
- * just-completed turn's user message becomes editable without re-snapshotting
- * the whole history.
- */
-export async function refreshEditableUserMessages(workspaceId: string, sessionId: string): Promise<void> {
-	try {
-		const editable = await window.agent.listEditableUserMessages(workspaceId, sessionId);
-		store.dispatch({ type: "session-editable-messages", sessionId, editableUserMessages: editable });
-	} catch {
-		// Editability is best-effort; the edit button just stays hidden.
-	}
-}
-
 async function refreshSessionCatalog(): Promise<void> {
 	const generation = ++catalogRefreshGeneration;
 	try {
@@ -408,15 +390,14 @@ export async function removeWorkspaceEntry(workspace: string): Promise<void> {
 }
 
 /**
- * Fetch a session's authoritative snapshot (state, history, thinking
- * levels, editable entries) and apply it to the store. Shared by
+ * Re-fetch a session's authoritative snapshot (state, history with stable
+ * entry ids, thinking levels) and apply it to the store. Shared by
  * openSession and the edit-fork paths that must show authoritative history.
  */
 async function loadSessionSnapshot(workspaceId: string, sessionId: string): Promise<void> {
-	const [sessionSnapshot, thinkingLevels, editableUserMessages] = await Promise.all([
+	const [sessionSnapshot, thinkingLevels] = await Promise.all([
 		window.agent.openSession(workspaceId, sessionId),
 		window.agent.listThinkingLevels(workspaceId, sessionId).catch(() => []),
-		window.agent.listEditableUserMessages(workspaceId, sessionId).catch(() => []),
 	]);
 	const revision = agentStateRevision;
 	store.dispatch({
@@ -426,7 +407,7 @@ async function loadSessionSnapshot(workspaceId: string, sessionId: string): Prom
 		messages: sessionSnapshot.messages,
 		usage: sessionSnapshot.usage,
 		thinkingLevels,
-		editableUserMessages,
+		entryIds: sessionSnapshot.entryIds,
 	});
 	if (revision === agentStateRevision) {
 		void refreshSessionUsage(workspaceId, sessionId);
@@ -448,11 +429,6 @@ export async function newSession(workspaceId: string): Promise<string> {
  */
 export function startEditMessage(sessionId: string, entryId: string, text: string): void {
 	store.dispatch({ type: "session-edit-start", sessionId, entryId, text });
-}
-
-/** Update the inline editor's draft text. */
-export function updateEditDraft(sessionId: string, text: string): void {
-	store.dispatch({ type: "session-edit-draft", sessionId, text });
 }
 
 /** Close the inline editor without changing anything. */
@@ -654,11 +630,16 @@ export async function listCustomProviders(): Promise<CustomProviderConfig[]> {
 }
 
 /**
- * Save (upsert) a custom provider to models.json, reload the backend catalog,
- * and refresh the GUI so the provider is immediately selectable.
+ * Save (upsert) a custom provider to models.json (reloading the backend
+ * catalog in the main process), optionally store the dialog's API key
+ * through the credential API, then refresh the GUI exactly once so the
+ * provider is immediately selectable.
  */
-export async function saveCustomProvider(config: CustomProviderConfig): Promise<void> {
+export async function saveCustomProvider(config: CustomProviderConfig, apiKey?: string): Promise<void> {
 	await window.agent.saveCustomProvider(config);
+	if (apiKey !== undefined) {
+		await window.agent.setApiKey(config.id, apiKey);
+	}
 	await Promise.all([refreshModels(), refreshProviderAuth()]);
 }
 

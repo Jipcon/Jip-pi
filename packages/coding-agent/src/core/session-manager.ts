@@ -331,7 +331,13 @@ function buildEntryIndex(entries: SessionEntry[], byId?: Map<string, SessionEntr
 	return index;
 }
 
-function buildSessionPath(
+/**
+ * Walk from the leaf (or the last appended entry when no leaf is given) to
+ * the root, returning the branch in root-first order. This is the single
+ * authoritative leaf/branch rule: consumers must never re-implement the
+ * walk themselves.
+ */
+export function buildSessionPath(
 	entries: SessionEntry[],
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,

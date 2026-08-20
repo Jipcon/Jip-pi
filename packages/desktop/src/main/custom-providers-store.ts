@@ -2,20 +2,31 @@
  * Custom providers store: reads and writes the `providers` object of
  * ~/.pi/agent/models.json for the GUI's custom-provider management.
  *
- * The store owns only the GUI-managed fields (id, name, baseUrl, api,
- * authHeader, headers, models). Provider-level fields the GUI does not
- * surface (compat, modelOverrides, oauth, apiKey, …) are preserved across
- * saves so hand-edited advanced configuration survives GUI edits. Other
- * providers and any other top-level keys in the file are left untouched.
+ * GUI-owned fields (provider: id, name, baseUrl, api, authHeader, headers,
+ * models; model: id, name, reasoning, input, contextWindow, maxTokens,
+ * thinkingLevelMap) are written exactly as edited. Everything else is
+ * unmanaged and preserved verbatim: provider-level compat, modelOverrides,
+ * oauth, apiKey, …, and model-level api, baseUrl, cost, samplingParams,
+ * headers, compat and unknown fields. Model entries are matched by their
+ * original id, so renaming a model never drags another model's unmanaged
+ * fields along, deleting a model drops its raw entry, and reordering is
+ * idempotent. Other providers and any other top-level keys in the file are
+ * left untouched.
+ *
+ * Writes are atomic (temp file + rename) and the complete candidate file is
+ * validated against Pi's authoritative models.json schema before anything is
+ * written, so a failed validation, write or reload never leaves a half-
+ * written config behind.
  *
  * API keys are intentionally not part of this schema: credentials are stored
  * through the shared credential API (auth.json) via the existing API-key
  * dialog, so secrets never land in models.json through the GUI.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { ModelThinkingLevel } from "@earendil-works/pi-agent-protocol";
+import { loadSdk } from "@earendil-works/pi-sdk-adapter";
 import type { CustomProviderApi, CustomProviderConfig, CustomProviderModelConfig } from "../shared/ipc.ts";
 
 const SUPPORTED_APIS: readonly CustomProviderApi[] = [
@@ -24,6 +35,11 @@ const SUPPORTED_APIS: readonly CustomProviderApi[] = [
 	"anthropic-messages",
 	"google-generative-ai",
 ];
+
+/** Narrow an unknown value to the GUI-supported API set (no bare casts). */
+function isSupportedApi(value: unknown): value is CustomProviderApi {
+	return typeof value === "string" && (SUPPORTED_APIS as readonly string[]).includes(value);
+}
 
 const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -72,16 +88,36 @@ function readModelsJson(modelsPath: string): ModelsJsonFile {
 	return { providers: {} };
 }
 
-function writeModelsJson(modelsPath: string, file: ModelsJsonFile): void {
+function writeModelsJson(modelsPath: string, content: string): void {
 	mkdirSync(dirname(modelsPath), { recursive: true });
-	writeFileSync(modelsPath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+	// Atomic replacement: the temp file lands next to the target (same
+	// volume) and is renamed over it, so readers only ever see the old or the
+	// complete new document. A failed write removes the temp file and leaves
+	// the original untouched.
+	const tempPath = `${modelsPath}.tmp-${process.pid}`;
+	try {
+		writeFileSync(tempPath, content, "utf8");
+		renameSync(tempPath, modelsPath);
+	} catch (error) {
+		try {
+			rmSync(tempPath, { force: true });
+		} catch {
+			// Cleanup is best-effort; the original file is still intact.
+		}
+		throw error;
+	}
 }
 
-/** Project a raw models.json provider entry onto the GUI-managed subset. */
+/** Project a raw models.json provider entry onto the GUI-owned subset. */
 function projectProvider(id: string, raw: Record<string, unknown>): CustomProviderConfig | null {
 	if (typeof raw.baseUrl !== "string" || !Array.isArray(raw.models)) {
 		// Pure override entries (e.g. a baseUrl-only proxy for a builtin) are
 		// not representable in the GUI form and are hidden from the list.
+		return null;
+	}
+	if (!isSupportedApi(raw.api)) {
+		// Providers using an API the dialog cannot represent are hidden: a
+		// save would otherwise rewrite the hand-written api value.
 		return null;
 	}
 	const models: CustomProviderModelConfig[] = [];
@@ -105,7 +141,7 @@ function projectProvider(id: string, raw: Record<string, unknown>): CustomProvid
 	const config: CustomProviderConfig = {
 		id,
 		baseUrl: raw.baseUrl,
-		api: (typeof raw.api === "string" ? raw.api : "openai-completions") as CustomProviderApi,
+		api: raw.api,
 		models,
 	};
 	if (typeof raw.name === "string") config.name = raw.name;
@@ -120,15 +156,42 @@ function projectProvider(id: string, raw: Record<string, unknown>): CustomProvid
 	return config;
 }
 
-/** Serialize a GUI model entry back to models.json shape. */
-function serializeModel(model: CustomProviderModelConfig): Record<string, unknown> {
-	const out: Record<string, unknown> = { id: model.id };
+/** Raw model entries of a previous provider, keyed by model id. */
+function previousModelsById(previous: Record<string, unknown> | undefined): Map<string, Record<string, unknown>> {
+	const byId = new Map<string, Record<string, unknown>>();
+	if (!previous || !Array.isArray(previous.models)) return byId;
+	for (const entry of previous.models) {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+		const model = entry as Record<string, unknown>;
+		if (typeof model.id === "string") byId.set(model.id, model);
+	}
+	return byId;
+}
+
+/**
+ * Serialize one GUI model entry, overlaying the GUI-owned fields onto the
+ * raw entry with the same id. Unmanaged model-level fields (api, baseUrl,
+ * cost, samplingParams, headers, compat, unknown keys) survive; a renamed
+ * model matches no previous entry and starts clean.
+ */
+function serializeModel(
+	model: CustomProviderModelConfig,
+	previous: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...(previous ?? {}) };
+	out.id = model.id;
 	if (model.name !== undefined) out.name = model.name;
+	else delete out.name;
 	if (model.reasoning !== undefined) out.reasoning = model.reasoning;
+	else delete out.reasoning;
 	if (model.input !== undefined) out.input = [...model.input];
+	else delete out.input;
 	if (model.contextWindow !== undefined) out.contextWindow = model.contextWindow;
+	else delete out.contextWindow;
 	if (model.maxTokens !== undefined) out.maxTokens = model.maxTokens;
+	else delete out.maxTokens;
 	if (model.thinkingLevelMap !== undefined) out.thinkingLevelMap = { ...model.thinkingLevelMap };
+	else delete out.thinkingLevelMap;
 	return out;
 }
 
@@ -155,7 +218,8 @@ function serializeProvider(
 	} else {
 		delete next.headers;
 	}
-	next.models = config.models.map(serializeModel);
+	const previousModels = previousModelsById(previous);
+	next.models = config.models.map((model) => serializeModel(model, previousModels.get(model.id)));
 	return next;
 }
 
@@ -199,8 +263,13 @@ export function listCustomProviders(modelsPath: string): CustomProviderConfig[] 
 	return configs;
 }
 
-/** Upsert a custom provider into models.json, preserving unmanaged fields. */
-export function saveCustomProvider(modelsPath: string, config: CustomProviderConfig): void {
+/**
+ * Upsert a custom provider into models.json, preserving unmanaged fields.
+ * The complete candidate file is validated against Pi's authoritative
+ * models.json schema before the atomic write, so a validation or write
+ * failure never leaves a half-written config behind.
+ */
+export async function saveCustomProvider(modelsPath: string, config: CustomProviderConfig): Promise<void> {
 	validateConfig(config);
 	const path = resolveModelsPath(modelsPath);
 	const file = readModelsJson(path);
@@ -208,7 +277,13 @@ export function saveCustomProvider(modelsPath: string, config: CustomProviderCon
 	const previous = providers[config.id];
 	providers[config.id] = serializeProvider(config, previous);
 	file.providers = providers;
-	writeModelsJson(path, file);
+	const content = `${JSON.stringify(file, null, 2)}\n`;
+	const { validateModelsJsonContent } = await loadSdk();
+	const schemaError = validateModelsJsonContent(content);
+	if (schemaError !== undefined) {
+		throw new Error(`Refusing to write invalid models.json: ${schemaError}`);
+	}
+	writeModelsJson(path, content);
 }
 
 /** Remove a custom provider from models.json. No-op if the provider is absent. */
@@ -225,5 +300,5 @@ export function deleteCustomProvider(modelsPath: string, providerId: string): vo
 	}
 	delete providers[id];
 	file.providers = providers;
-	writeModelsJson(path, file);
+	writeModelsJson(path, `${JSON.stringify(file, null, 2)}\n`);
 }

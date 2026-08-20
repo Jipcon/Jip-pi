@@ -66,6 +66,95 @@ async function captureOpenAIResponseHeaders(
 	return captured;
 }
 
+describe("openai-responses developer role detection", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	function makeResponsesModel(overrides: Partial<Model<"openai-responses">> = {}): Model<"openai-responses"> {
+		return {
+			id: "gpt-test",
+			name: "GPT Test",
+			api: "openai-responses",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1000,
+			maxTokens: 100,
+			...overrides,
+		};
+	}
+
+	async function captureSystemPromptRole(model: Model<"openai-responses">): Promise<string | undefined> {
+		let systemRole: string | undefined;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				onPayload: (payload) => {
+					const input = (payload as { input?: Array<{ role?: string; content?: string }> }).input;
+					systemRole = input?.find((item) => item.content === "sys")?.role;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		return systemRole;
+	}
+
+	it("uses the developer role for the official OpenAI endpoint", async () => {
+		expect(await captureSystemPromptRole(makeResponsesModel())).toBe("developer");
+	});
+
+	it("does not treat a lookalike hostname as the official endpoint", async () => {
+		expect(await captureSystemPromptRole(makeResponsesModel({ baseUrl: "https://api.openai.com.example/v1" }))).toBe(
+			"system",
+		);
+	});
+
+	it("ignores api.openai.com appearing only in the path or query", async () => {
+		expect(
+			await captureSystemPromptRole(makeResponsesModel({ baseUrl: "https://proxy.example/api.openai.com/v1" })),
+		).toBe("system");
+		expect(
+			await captureSystemPromptRole(makeResponsesModel({ baseUrl: "https://proxy.example/v1?host=api.openai.com" })),
+		).toBe("system");
+	});
+
+	it("falls back to the safe default for malformed base URLs", async () => {
+		expect(await captureSystemPromptRole(makeResponsesModel({ baseUrl: "not a url" }))).toBe("system");
+	});
+
+	it("lets explicit compat.supportsDeveloperRole override the hostname detection", async () => {
+		expect(
+			await captureSystemPromptRole(
+				makeResponsesModel({ baseUrl: "https://proxy.example/v1", compat: { supportsDeveloperRole: true } }),
+			),
+		).toBe("developer");
+		expect(
+			await captureSystemPromptRole(
+				makeResponsesModel({ baseUrl: "https://api.openai.com/v1", compat: { supportsDeveloperRole: false } }),
+			),
+		).toBe("system");
+	});
+});
+
 describe("openai-responses provider defaults", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();

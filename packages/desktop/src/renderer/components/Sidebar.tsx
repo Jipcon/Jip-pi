@@ -16,6 +16,7 @@ import {
 	store,
 } from "../state/hooks.ts";
 import type { SessionStatusIndicator } from "../state/store.ts";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { Icon } from "./Icon.tsx";
 
 interface SessionContextMenuState {
@@ -170,12 +171,9 @@ function RenameSessionDialog({
 				data-testid="rename-session-dialog"
 			>
 				<div className="modal-header">
-					<div>
-						<span className="modal-eyebrow">Conversation</span>
-						<h3 className="modal-title" id="rename-session-title">
-							Rename session
-						</h3>
-					</div>
+					<h3 className="modal-title" id="rename-session-title">
+						Rename session
+					</h3>
 					<button
 						type="button"
 						className="icon-button"
@@ -188,7 +186,6 @@ function RenameSessionDialog({
 				</div>
 				<div className="modal-body">
 					<label className="session-rename-field">
-						<span>Session name</span>
 						<input
 							type="text"
 							className="modal-input"
@@ -196,6 +193,8 @@ function RenameSessionDialog({
 							disabled={saving}
 							maxLength={160}
 							autoFocus
+							placeholder="Enter session name"
+							aria-label="Session name"
 							onChange={(event) => setName(event.target.value)}
 							data-testid="rename-session-input"
 						/>
@@ -223,77 +222,41 @@ function DeleteSessionDialog({
 	onClose: () => void;
 }): React.JSX.Element {
 	const [deleting, setDeleting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
 	const confirmDelete = async (): Promise<void> => {
 		setDeleting(true);
+		setError(null);
 		try {
 			await deleteSessionEntry(session);
 			onClose();
-		} catch (error) {
-			store.dispatch({
-				type: "notify",
-				notification: {
-					message: `Failed to delete "${displaySessionTitle(session)}": ${error instanceof Error ? error.message : String(error)}`,
-					type: "error",
-				},
-			});
+		} catch (err) {
+			// The dialog stays open and shows the failure.
+			setError(
+				`Failed to delete "${displaySessionTitle(session)}": ${err instanceof Error ? err.message : String(err)}`,
+			);
 		} finally {
 			setDeleting(false);
 		}
 	};
 
 	return (
-		<div className="modal-backdrop">
-			<div
-				className="modal session-delete-modal"
-				onKeyDown={(event) => {
-					if (event.key === "Escape" && !deleting) {
-						onClose();
-					}
-				}}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="delete-session-title"
-				data-testid="delete-session-dialog"
-			>
-				<div className="modal-header">
-					<div>
-						<span className="modal-eyebrow">Conversation</span>
-						<h3 className="modal-title" id="delete-session-title">
-							Delete session?
-						</h3>
-					</div>
-					<button
-						type="button"
-						className="icon-button"
-						disabled={deleting}
-						onClick={onClose}
-						aria-label="Close delete dialog"
-					>
-						<Icon name="close" />
-					</button>
-				</div>
-				<div className="modal-body">
-					<p className="session-delete-warning" title={sessionTitle(session)}>
-						Move "{displaySessionTitle(session)}" to the system Trash? This cannot be undone.
-					</p>
-				</div>
-				<div className="modal-actions">
-					<button type="button" className="btn" disabled={deleting} onClick={onClose}>
-						Cancel
-					</button>
-					<button
-						type="button"
-						className="btn btn-danger"
-						disabled={deleting}
-						onClick={() => void confirmDelete()}
-						data-testid="delete-session-confirm"
-					>
-						{deleting ? "Deleting…" : "Move to Trash"}
-					</button>
-				</div>
-			</div>
-		</div>
+		<ConfirmDialog
+			eyebrow="Conversation"
+			title="Delete session?"
+			message={`Move "${displaySessionTitle(session)}" to the system Trash? This cannot be undone.`}
+			messageTitle={sessionTitle(session)}
+			confirmLabel="Move to Trash"
+			busyLabel="Deleting…"
+			busy={deleting}
+			error={error}
+			onConfirm={() => void confirmDelete()}
+			onClose={onClose}
+			testId="delete-session-dialog"
+			confirmTestId="delete-session-confirm"
+			titleId="delete-session-title"
+			closeLabel="Close delete dialog"
+		/>
 	);
 }
 
@@ -307,79 +270,45 @@ function RemoveWorkspaceDialog({
 	onClose: () => void;
 }): React.JSX.Element {
 	const [deleting, setDeleting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
 	const confirmRemove = async (): Promise<void> => {
 		setDeleting(true);
+		setError(null);
 		try {
 			await removeWorkspaceEntry(workspacePath);
 			onClose();
-		} catch (error) {
-			store.dispatch({
-				type: "notify",
-				notification: {
-					message: `Failed to remove "${workspaceName(workspacePath)}": ${error instanceof Error ? error.message : String(error)}`,
-					type: "error",
-				},
-			});
+		} catch (err) {
+			// The dialog stays open and shows the failure.
+			setError(
+				`Failed to remove "${workspaceName(workspacePath)}": ${err instanceof Error ? err.message : String(err)}`,
+			);
 		} finally {
 			setDeleting(false);
 		}
 	};
 
 	return (
-		<div className="modal-backdrop">
-			<div
-				className="modal session-delete-modal"
-				onKeyDown={(event) => {
-					if (event.key === "Escape" && !deleting) {
-						onClose();
-					}
-				}}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="remove-workspace-title"
-				data-testid="remove-workspace-dialog"
-			>
-				<div className="modal-header">
-					<div>
-						<span className="modal-eyebrow">Workspace</span>
-						<h3 className="modal-title" id="remove-workspace-title">
-							Remove workspace?
-						</h3>
-					</div>
-					<button
-						type="button"
-						className="icon-button"
-						disabled={deleting}
-						onClick={onClose}
-						aria-label="Close remove workspace dialog"
-					>
-						<Icon name="close" />
-					</button>
-				</div>
-				<div className="modal-body">
-					<p className="session-delete-warning" title={workspacePath}>
-						{sessionCount > 0
-							? `Remove "${workspaceName(workspacePath)}" and move the folder and its ${sessionCount} session${sessionCount === 1 ? "" : "s"} to the system Trash? This cannot be undone.`
-							: `Remove "${workspaceName(workspacePath)}" and move the folder to the system Trash? This cannot be undone.`}
-					</p>
-				</div>
-				<div className="modal-actions">
-					<button type="button" className="btn" disabled={deleting} onClick={onClose}>
-						Cancel
-					</button>
-					<button
-						type="button"
-						className="btn btn-danger"
-						disabled={deleting}
-						onClick={() => void confirmRemove()}
-						data-testid="remove-workspace-confirm"
-					>
-						{deleting ? "Removing…" : "Move to Trash"}
-					</button>
-				</div>
-			</div>
-		</div>
+		<ConfirmDialog
+			eyebrow="Workspace"
+			title="Remove workspace?"
+			message={
+				sessionCount > 0
+					? `Remove "${workspaceName(workspacePath)}" and move the folder and its ${sessionCount} session${sessionCount === 1 ? "" : "s"} to the system Trash? This cannot be undone.`
+					: `Remove "${workspaceName(workspacePath)}" and move the folder to the system Trash? This cannot be undone.`
+			}
+			messageTitle={workspacePath}
+			confirmLabel="Move to Trash"
+			busyLabel="Removing…"
+			busy={deleting}
+			error={error}
+			onConfirm={() => void confirmRemove()}
+			onClose={onClose}
+			testId="remove-workspace-dialog"
+			confirmTestId="remove-workspace-confirm"
+			titleId="remove-workspace-title"
+			closeLabel="Close remove workspace dialog"
+		/>
 	);
 }
 
@@ -448,7 +377,7 @@ export function Sidebar({
 						data-testid="new-session-button"
 					>
 						<Icon name="plus" />
-						New conversation
+						New chat
 					</button>
 					<button
 						type="button"
@@ -464,10 +393,6 @@ export function Sidebar({
 			</section>
 
 			<section className="sidebar-section sidebar-section-grow">
-				<div className="sidebar-section-header">
-					<h2 className="sidebar-heading">Conversations</h2>
-					<span className="sidebar-count">{displayedSessions.length}</span>
-				</div>
 				<ul className="session-list session-project-list">
 					{groups.length === 0 && (
 						<li className="session-empty">
@@ -517,7 +442,6 @@ export function Sidebar({
 										});
 									}}
 								>
-									<Icon name="folder" size={16} className="session-project-folder" />
 									<h3>{group.name}</h3>
 									{switching && (
 										<span className="session-project-switching" aria-label={`Opening ${group.name}…`}>
@@ -640,7 +564,6 @@ export function Sidebar({
 								setRemoveWorkspaceTarget(target);
 							}}
 						>
-							<Icon name="trash" size={14} />
 							Remove workspace
 						</button>
 					</div>
@@ -681,7 +604,6 @@ export function Sidebar({
 								setContextMenu(null);
 							}}
 						>
-							<Icon name="edit" size={14} />
 							Rename
 						</button>
 						<button
@@ -703,7 +625,6 @@ export function Sidebar({
 									: undefined
 							}
 						>
-							<Icon name="trash" size={14} />
 							Move to Trash
 						</button>
 					</div>

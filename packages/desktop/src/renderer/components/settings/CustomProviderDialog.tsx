@@ -9,7 +9,7 @@
  * by this dialog.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ModelThinkingLevel } from "@earendil-works/pi-agent-protocol";
 import type {
 	CustomProviderApi,
@@ -116,6 +116,22 @@ export function CustomProviderDialog({
 	// Non-blocking: catalog matching failures still leave the fetched list
 	// usable, the user just fills the parameters manually.
 	const [matchError, setMatchError] = useState<string | null>(null);
+	// Stale-result protection: every fetch is bound to a fingerprint of the
+	// connection draft. Editing the draft while a fetch is in flight bumps
+	// the fingerprint, so the late result is discarded instead of published.
+	const fetchGenerationRef = useRef(0);
+	const draftRef = useRef({ baseUrl, api, apiKey, authHeader, headers });
+	draftRef.current = { baseUrl, api, apiKey, authHeader, headers };
+	const draftFingerprint = (): string => {
+		const draft = draftRef.current;
+		return JSON.stringify({
+			baseUrl: draft.baseUrl.trim(),
+			api: draft.api,
+			apiKey: draft.apiKey.trim(),
+			authHeader: draft.authHeader,
+			headers: draft.headers.map((entry) => [entry.key.trim(), entry.value]),
+		});
+	};
 
 	const addHeader = (): void => setHeaders((prev) => [...prev, { key: "", value: "" }]);
 	const updateHeader = (index: number, field: "key" | "value", value: string): void =>
@@ -136,15 +152,32 @@ export function CustomProviderDialog({
 			setFetchError("Enter a base URL before fetching models");
 			return;
 		}
+		const generation = ++fetchGenerationRef.current;
+		const fingerprint = draftFingerprint();
+		const isStale = (): boolean => fetchGenerationRef.current !== generation || draftFingerprint() !== fingerprint;
 		setFetchPhase("fetching");
 		setFetchError(null);
 		setMatchError(null);
 		try {
+			// The request carries the complete connection draft so the main
+			// process builds headers exactly like a real provider request.
+			const serializedHeaders: Record<string, string> = {};
+			for (const entry of headers) {
+				const key = entry.key.trim();
+				if (key.length > 0) serializedHeaders[key] = entry.value;
+			}
 			const models = await onFetchModels({
 				baseUrl: trimmedBaseUrl,
 				api,
 				apiKey: apiKey.trim() || undefined,
+				authHeader,
+				headers: serializedHeaders,
 			});
+			if (isStale()) {
+				// The connection draft changed while fetching: discard the
+				// late result; the newer fetch owns the UI state.
+				return;
+			}
 			if (models.length === 0) {
 				setFetchedModels([]);
 				setSelectedFetched(new Set());
@@ -162,6 +195,9 @@ export function CustomProviderDialog({
 					setMatchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
 				}
 			}
+			if (isStale()) {
+				return;
+			}
 			// Publish the list, its selection and the metadata atomically so
 			// "Add selected" can never run against a half-matched result.
 			setFetchedModels(models);
@@ -170,9 +206,14 @@ export function CustomProviderDialog({
 				new Map(matches.filter((match) => match.status !== "unmatched").map((match) => [match.id, match])),
 			);
 		} catch (error) {
+			if (isStale()) {
+				return;
+			}
 			setFetchError(redactCredentialText(error instanceof Error ? error.message : String(error)));
 		} finally {
-			setFetchPhase("idle");
+			if (!isStale()) {
+				setFetchPhase("idle");
+			}
 		}
 	};
 

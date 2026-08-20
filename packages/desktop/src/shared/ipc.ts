@@ -134,14 +134,19 @@ export interface CustomProviderConfig {
 }
 
 /**
- * One-shot model-list fetch request. The apiKey is used only for the fetch
- * request itself and is never persisted to models.json by this path; the
- * dialog stores it through the credential API on save instead.
+ * One-shot model-list fetch request carrying the complete connection draft.
+ * The apiKey is used only for the fetch request itself and is never
+ * persisted to models.json by this path; the dialog stores it through the
+ * credential API on save instead.
  */
 export interface CustomProviderFetchRequest {
 	baseUrl: string;
 	api: CustomProviderApi;
 	apiKey?: string;
+	/** The draft's authHeader flag: send `Authorization: Bearer <apiKey>`. */
+	authHeader?: boolean;
+	/** The draft's custom headers (may themselves carry credentials). */
+	headers?: Record<string, string>;
 }
 
 /** One model returned by the provider's model-list endpoint. */
@@ -204,4 +209,9 @@ export interface SessionSnapshot {
 	state: AgentState;
 	messages: AgentMessage[];
 	usage: SessionUsage | null;
+	/**
+	 * Stable session entry id per message, parallel to `messages` (only user
+	 * messages carry one). Absent for backends without tree support.
+	 */
+	entryIds?: Array<string | undefined>;
 }

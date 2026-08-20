@@ -74,7 +74,6 @@ export interface DesktopAgentRuntime {
 	/** Editable user messages of a session (live backend or the catalog file). */
 	listEditableUserMessages(workspaceId: string, sessionId: string): Promise<EditableUserMessage[]>;
 	/**
-	 * Edit a past user message by forking a new session before it (file-level
 	 * Edit a past user message in place: the session tree branches before
 	 * the message (same session file) and the edited text is resent.
 	 */

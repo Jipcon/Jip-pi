@@ -6,18 +6,18 @@
 :root {
 	color-scheme: dark;
 
-	/* neutral surfaces */
-	--bg: #080808;
-	--canvas: #0b0b0b;
-	--surface: #101010;
-	--surface-raised: #171717;
-	--surface-hover: #202020;
-	--surface-active: #292929;
-	--surface-overlay: #141414;
+	/* neutral surfaces — lifted from pure black to reduce eye strain and add layer depth */
+	--bg: #0f1113;
+	--canvas: #121416;
+	--surface: #191c1f;
+	--surface-raised: #21262b;
+	--surface-hover: #282e33;
+	--surface-active: #323a42;
+	--surface-overlay: #1e2328;
 
 	/* borders and text */
-	--border: #292929;
-	--border-strong: #3a3a3a;
+	--border: #2a3036;
+	--border-strong: #383e46;
 	--text: #f5f5f5;
 	--text-secondary: #c7c7c7;
 	--text-muted: #8d8d8d;
@@ -31,8 +31,10 @@
 	--accent-border: rgba(59, 130, 246, 0.46);
 	--success: #4ade80;
 	--success-soft: rgba(74, 222, 128, 0.11);
-	--danger: #fb7185;
-	--danger-soft: rgba(251, 113, 133, 0.11);
+	--danger: #ef4444;
+	--danger-strong: #dc2626;
+	--danger-soft: rgba(239, 68, 68, 0.12);
+	--danger-border: rgba(239, 68, 68, 0.5);
 	--warning: #ffd43b;
 	--warning-soft: rgba(255, 212, 59, 0.13);
 
@@ -41,13 +43,13 @@
 	--text-on-accent-hover: #ffffff;
 	--accent-content: #93c5fd;
 	--accent-content-hover: #bfdbfe;
-	--danger-hover: #ff9aa6;
+	--danger-hover: #f87171;
 	--assistant-text: #ededed;
 	--link-hover: #93c5fd;
 	--inline-code-text: #d4d4d4;
-	--code-surface: #1e1e1e;
-	--process-surface: rgba(16, 16, 16, 0.78);
-	--modal-backdrop: rgba(0, 0, 0, 0.76);
+	--code-surface: #1e2328;
+	--process-surface: rgba(25, 28, 31, 0.86);
+	--modal-backdrop: rgba(8, 10, 12, 0.55);
 
 	/* shape and depth */
 	--radius-small: 6px;
@@ -60,7 +62,7 @@
 
 	/* layout metrics: consumed by app.css shell/chat/sidebar rules */
 	--sidebar-width: 278px;
-	--chat-column-width: 720px;
+	--chat-column-width: 820px;
 	--statusbar-height: 30px;
 
 	/* typography: CJK fallbacks keep Chinese UI text on the same optical family */
