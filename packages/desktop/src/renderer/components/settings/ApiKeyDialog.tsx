@@ -66,7 +66,7 @@ export function ApiKeyDialog({
 						{error && <p className="settings-error">{error}</p>}
 					</div>
 					{status.supportsApiKey && (
-						<label className="settings-field">
+						<label className="auth-key-field">
 							<span>API key</span>
 							<input
 								type="password"
@@ -76,10 +76,19 @@ export function ApiKeyDialog({
 								autoComplete="off"
 								spellCheck={false}
 								disabled={busy}
+								autoFocus
 								onChange={(event) => setKeyDraft(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" && keyDraft.trim() && !busy) void save();
+								}}
 								data-testid={`auth-key-input-${provider}`}
 							/>
 						</label>
+					)}
+					{status.supportsApiKey && status.supportsOAuth && (
+						<div className="auth-divider" aria-hidden="true">
+							<span>or</span>
+						</div>
 					)}
 					{status.supportsOAuth && (
 						<div className="auth-oauth-entry">
