@@ -182,10 +182,10 @@ async function loadSessionCatalog(): Promise<SessionInfo[]> {
 
 function createWindow(): void {
 	mainWindow = new BrowserWindow({
-		width: 1440,
-		height: 900,
-		minWidth: 1080,
-		minHeight: 720,
+		width: 1280,
+		height: 800,
+		minWidth: 1024,
+		minHeight: 640,
 		title: "Jip-pi",
 		icon: join(app.getAppPath(), "assets", "icon.png"),
 		backgroundColor: "#121416",

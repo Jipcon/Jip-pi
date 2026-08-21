@@ -383,7 +383,7 @@ export function SettingsPanel({
 									{storageError && <p className="settings-error">{storageError}</p>}
 									<button
 										type="button"
-										className="btn btn-small"
+										className="btn"
 										disabled={
 											!storageChanged ||
 											storageControlsDisabled ||
