@@ -39,12 +39,7 @@ const SETTINGS_SCALE = 0.6;
 
 const ICONS: Record<IconName, IconDefinition> = {
 	"arrow-up": {
-		content: (
-			<g strokeWidth={2.5}>
-				<path d="M12 19.5V4.5" />
-				<path d="m5.5 10 6.5-6 6.5 6" />
-			</g>
-		),
+		content: <path d="M12 6.2 L18 16.6 L6 16.6 Z" fill="currentColor" stroke="none" />,
 	},
 
 	check: {

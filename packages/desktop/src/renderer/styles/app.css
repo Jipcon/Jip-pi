@@ -2059,7 +2059,7 @@ body.sidebar-resizing * {
 			90deg,
 			var(--warning) 0%,
 			var(--warning) 38%,
-			#fef08a 50%,
+			#fff7b3 50%,
 			var(--warning) 62%,
 			var(--warning) 100%
 		);
