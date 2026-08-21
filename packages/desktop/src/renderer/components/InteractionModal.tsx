@@ -123,23 +123,109 @@ export function InteractionDialog({
 	);
 }
 
+function formatToM(raw: string): string {
+	const numeric = raw.replace(/,/g, "").trim();
+	const value = Number(numeric);
+	if (!Number.isFinite(value)) return raw;
+	const millions = value / 1_000_000;
+	if (millions === 0) return "0M";
+	if (millions < 0.01) return `${millions.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}M`;
+	return `${millions.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}M`;
+}
+
+function parseTurnStats(message: string): Record<string, string> | null {
+	const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
+	if (lines[0] !== "Turn Stats") return null;
+	const data: Record<string, string> = {};
+	for (const line of lines.slice(1)) {
+		const match = line.match(/^(\w+)\s+(.+)$/);
+		if (match) data[match[1].toLowerCase()] = match[2];
+	}
+	if (data.input) data.input = formatToM(data.input);
+	if (data.output) data.output = formatToM(data.output);
+	if (data.total) data.total = formatToM(data.total);
+	if (data.cache) {
+		const cacheMatch = data.cache.match(/r\s*([\d,]+)\s*\/\s*w\s*([\d,]+)/i);
+		if (cacheMatch) {
+			data["cache read"] = formatToM(cacheMatch[1]);
+			data["cache write"] = formatToM(cacheMatch[2]);
+			delete data.cache;
+		}
+	}
+	return data;
+}
+
 export function NotificationToasts({
 	notifications,
 	onDismiss,
 }: {
-	notifications: Array<{ id: string; message: string; type: "info" | "warning" | "error" }>;
+	notifications: Array<{ id: string; message: string; type: "info" | "warning" | "error" }>; 
 	onDismiss: (id: string) => void;
 }): React.JSX.Element {
 	return (
 		<div className="toast-container" data-testid="toast-container">
-			{notifications.map((notification) => (
-				<div key={notification.id} className={`toast toast-${notification.type}`}>
-					<span>{notification.message}</span>
-					<button type="button" className="toast-close" onClick={() => onDismiss(notification.id)}>
-						×
-					</button>
-				</div>
-			))}
+			{notifications.map((notification) => {
+				const turnStats = parseTurnStats(notification.message);
+				if (turnStats) {
+					return (
+						<div key={notification.id} className="toast toast-turn-stats" data-testid="toast-turn-stats">
+							<div className="toast-turn-top">
+								<span className="toast-turn-title">Turn Stats</span>
+								<button type="button" className="toast-close" onClick={() => onDismiss(notification.id)}>
+									×
+								</button>
+							</div>
+							{(turnStats.speed || turnStats.time) && (
+								<div className="toast-turn-meta">
+									<span>
+										{[turnStats.speed?.replace(/ /g, "\u00A0"), turnStats.time].filter(Boolean).join(" \u00B7 ")}
+									</span>
+								</div>
+							)}
+							<div className="toast-turn-grid">
+								{turnStats.input && (
+									<div className="toast-turn-metric">
+										<span className="toast-turn-label">Input</span>
+										<span className="toast-turn-value">{turnStats.input}</span>
+									</div>
+								)}
+								{turnStats.output && (
+									<div className="toast-turn-metric">
+										<span className="toast-turn-label">Output</span>
+										<span className="toast-turn-value">{turnStats.output}</span>
+									</div>
+								)}
+								{turnStats["cache read"] && (
+									<div className="toast-turn-metric">
+										<span className="toast-turn-label">Cache Read</span>
+										<span className="toast-turn-value">{turnStats["cache read"]}</span>
+									</div>
+								)}
+								{turnStats["cache write"] && (
+									<div className="toast-turn-metric">
+										<span className="toast-turn-label">Cache Write</span>
+										<span className="toast-turn-value">{turnStats["cache write"]}</span>
+									</div>
+								)}
+								{turnStats.total && (
+									<div className="toast-turn-metric toast-turn-total">
+										<span className="toast-turn-label">Total</span>
+										<span className="toast-turn-value">{turnStats.total}</span>
+									</div>
+								)}
+							</div>
+						</div>
+					);
+				}
+				return (
+					<div key={notification.id} className={`toast toast-${notification.type}`}>
+						<span>{notification.message}</span>
+						<button type="button" className="toast-close" onClick={() => onDismiss(notification.id)}>
+							×
+						</button>
+					</div>
+				);
+			})}
 		</div>
 	);
 }
