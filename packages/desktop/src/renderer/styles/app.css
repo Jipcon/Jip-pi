@@ -544,12 +544,22 @@ body.sidebar-resizing * {
 }
 
 .select-option-selected .thinking-meter-segment {
-	background: rgba(255, 255, 255, 0.22);
+	background: rgba(255, 255, 255, 0.32);
 }
 
 .select-option-selected .thinking-meter-segment-filled {
 	background: #ffffff;
 	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.select-option-selected:hover:not(:disabled) .thinking-meter-segment,
+.select-option-selected.select-option-active:not(:disabled) .thinking-meter-segment {
+	background: rgba(255, 255, 255, 0.32);
+}
+
+.select-option-selected:hover:not(:disabled) .thinking-meter-segment-filled,
+.select-option-selected.select-option-active:not(:disabled) .thinking-meter-segment-filled {
+	background: #ffffff;
 }
 
 /* Meta column sizing per dropdown — keeps right edge aligned. */
@@ -878,13 +888,15 @@ body.sidebar-resizing * {
 .session-project-header {
 	display: flex;
 	width: 100%;
-	height: 24px;
+	height: 32px;
+	min-height: 32px;
 	min-width: 0;
 	align-items: center;
-	gap: 6px;
-	padding: 0 4px;
+	gap: 9px;
+	margin-bottom: 4px;
+	padding: 7px 9px;
 	border: 0;
-	border-radius: 0;
+	border-radius: var(--radius-small);
 	background: transparent;
 	color: var(--text-faint);
 	cursor: pointer;
@@ -892,9 +904,9 @@ body.sidebar-resizing * {
 }
 
 .session-project-header:hover {
-	background: transparent;
+	background: var(--surface-hover);
 	border-color: transparent;
-	color: var(--text-muted);
+	color: var(--text);
 }
 
 .session-project-header svg {
@@ -1035,6 +1047,12 @@ body.sidebar-resizing * {
 	border-color: var(--accent);
 	background: var(--accent);
 	color: var(--text-on-accent);
+}
+
+.session-item-active:hover:not(:disabled) {
+	border-color: var(--accent-hover);
+	background: var(--accent-hover);
+	color: var(--text-on-accent-hover);
 }
 
 .session-item-active:active {
