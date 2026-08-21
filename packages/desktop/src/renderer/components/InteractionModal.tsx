@@ -135,7 +135,7 @@ function formatToM(raw: string): string {
 
 function parseTurnStats(message: string): Record<string, string> | null {
 	const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
-	if (lines[0] !== "Turn Stats") return null;
+	if (lines[0] !== "Turn Stats" && lines[0] !== "Turn Statistics") return null;
 	const data: Record<string, string> = {};
 	for (const line of lines.slice(1)) {
 		const match = line.match(/^(\w+)\s+(.+)$/);
@@ -170,7 +170,7 @@ export function NotificationToasts({
 					return (
 						<div key={notification.id} className="toast toast-turn-stats" data-testid="toast-turn-stats">
 							<div className="toast-turn-top">
-								<span className="toast-turn-title">Turn Stats</span>
+								<span className="toast-turn-title">Turn Statistics</span>
 								<button type="button" className="toast-close" onClick={() => onDismiss(notification.id)}>
 									×
 								</button>

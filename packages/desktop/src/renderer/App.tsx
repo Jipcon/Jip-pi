@@ -116,7 +116,11 @@ export function App(): React.JSX.Element {
 	const busy = state.status.phase === "starting";
 	const visibleNotifications = showTurnStatus
 		? state.notifications
-		: state.notifications.filter((notification) => !notification.message.startsWith("Turn Stats"));
+		: state.notifications.filter(
+				(notification) =>
+					!notification.message.startsWith("Turn Stats") &&
+					!notification.message.startsWith("Turn Statistics"),
+			);
 
 	// Sidebar indicators for every known session (running / needs-attention).
 	const indicators = useMemo(() => {
